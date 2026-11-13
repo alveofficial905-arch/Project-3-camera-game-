@@ -1,0 +1,525 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Temple Run IRL - Motion Camera Workout Game</title>
+    <link rel="stylesheet" href="style.css?v=25">
+
+    <!-- Three.js 3D Library -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+
+    <!-- MediaPipe Pose & Camera Utils -->
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils@0.3.1675466862/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose@0.5.1675469404/pose.js" crossorigin="anonymous"></script>
+</head>
+<body>
+
+    <!-- 3D Game Viewport -->
+    <div id="game-container"></div>
+
+    <!-- Screen Damage / Collision Flash -->
+    <div id="damage-flash"></div>
+
+    <!-- In-Game HUD -->
+    <div id="hud">
+        <!-- Top Bar -->
+        <div class="hud-top">
+            <!-- Left Stats Stack: Distance on top, Coins / Score below -->
+            <div class="stats-stack">
+                <div class="hud-card">
+                    <span class="label">Distance</span>
+                    <span class="value" id="hud-distance">0 m</span>
+                </div>
+                <div class="hud-card">
+                    <span class="label">Coins / Score</span>
+                    <span class="value" id="hud-score">🪙 0</span>
+                </div>
+                <div class="combo-badge" id="hud-combo">x1 COMBO</div>
+            </div>
+
+            <!-- Lives -->
+            <div class="stat-group">
+                <div class="lives-container" id="lives-display">
+                    <span class="heart" id="heart-1">❤️</span>
+                    <span class="heart" id="heart-2">❤️</span>
+                    <span class="heart" id="heart-3">❤️</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Big white arrow reflex cue (JUMP / DUCK / LEFT / RIGHT) -->
+        <div id="reflex-arrow" aria-live="polite">
+            <span class="arrow-word" id="reflex-arrow-word">JUMP</span>
+            <svg class="arrow-icon" id="reflex-arrow-icon" viewBox="0 0 100 100" aria-hidden="true">
+                <path d="M50 6 L92 50 L66 50 L66 94 L34 94 L34 50 L8 50 Z" fill="#fff" stroke="#1a2a44" stroke-width="6" stroke-linejoin="round"/>
+            </svg>
+        </div>
+
+        <!-- Feedback Rating Popup (Clean & Non-Obstructive) -->
+        <div class="feedback-zone">
+            <div id="feedback-popup">PERFECT! +500</div>
+        </div>
+    </div>
+
+    <!-- Webcam PIP & Body Motion Skeleton Overlay -->
+    <div id="pip-container">
+        <video id="pip-video" playsinline muted autoplay></video>
+        <canvas id="pip-canvas"></canvas>
+        <div class="pip-header">
+            <span class="pip-badge" id="pip-mode-badge">AI POSE TRACKER</span>
+        </div>
+        <div class="pip-status" id="pip-status-badge">STANDING</div>
+        <div class="pip-controls">
+            <button class="btn-calibrate" id="btn-recalibrate" title="Calibrate your standing height">🎯 Calibrate</button>
+        </div>
+    </div>
+
+    <!-- On-Screen Touch / Mobile Controls -->
+    <div class="touch-controls" id="touch-controls">
+        <div class="touch-group">
+            <button class="touch-btn" id="btn-touch-left" title="Move Left">
+                ◀
+                <span class="label">LEFT</span>
+            </button>
+            <button class="touch-btn" id="btn-touch-right" title="Move Right">
+                ▶
+                <span class="label">RIGHT</span>
+            </button>
+        </div>
+        <div class="touch-group">
+            <button class="touch-btn touch-btn-duck" id="btn-touch-duck" title="Duck / Slide">
+                ▼
+                <span class="label">SLIDE</span>
+            </button>
+            <button class="touch-btn touch-btn-jump" id="btn-touch-jump" title="Jump">
+                ▲
+                <span class="label">JUMP</span>
+            </button>
+        </div>
+    </div>
+
+    <!-- Perspective & Fullscreen Controls -->
+    <button class="fullscreen-btn" id="btn-toggle-cam" style="right: 220px;" title="Toggle 1st / 3rd Person View (Key: V)">📷 3rd/1st View</button>
+    <button class="fullscreen-btn" id="btn-fullscreen">⛶ Projector / Fullscreen</button>
+
+    <!-- Start Menu & Setup Modal -->
+    <div class="modal-overlay" id="start-modal">
+        <div class="menu-card">
+            <h1 class="game-title">TEMPLE RUN IRL</h1>
+            <p class="game-subtitle">Full-Body Camera Reflex & Workout Game</p>
+
+            <!-- How To Play Tiles -->
+            <div class="how-to-play">
+                <div class="instruction-tile">
+                    <span class="icon">🚧</span>
+                    <span class="text-strong">JUMP!</span>
+                    <span class="text-sub">Swipe Up / Tap Jump</span>
+                </div>
+                <div class="instruction-tile">
+                    <span class="icon">🪵</span>
+                    <span class="text-strong">DUCK / SQUAT!</span>
+                    <span class="text-sub">Swipe Down / Tap Slide</span>
+                </div>
+                <div class="instruction-tile">
+                    <span class="icon">🚆</span>
+                    <span class="text-strong">LEAN LEFT / RIGHT!</span>
+                    <span class="text-sub">Swipe / Tap Left & Right</span>
+                </div>
+            </div>
+
+            <!-- Settings & Configuration -->
+            <div class="options-row">
+                <div class="option-group">
+                    <label>Starting Biome</label>
+                    <select class="custom-select" id="select-starting-biome">
+                        <option value="MINE" selected>🚆 Railway Lines (Subway Surfers)</option>
+                        <option value="ALL">🔄 All Biomes (Classic Rotation)</option>
+                        <option value="TEMPLE">⛩️ Temple Causeway</option>
+                        <option value="BRIDGE">🌉 Suspension Bridge</option>
+                    </select>
+                </div>
+                <div class="option-group">
+                    <label>Camera Perspective</label>
+                    <select class="custom-select" id="select-camera-mode">
+                        <option value="thirdPerson" selected>3rd Person (Subway Surfers Avatar & Chaser)</option>
+                        <option value="firstPerson">1st Person (Immersive TV/Projector View)</option>
+                    </select>
+                </div>
+            </div>
+
+            <div class="options-row">
+                <div class="option-group">
+                    <label>Control Method</label>
+                    <select class="custom-select" id="select-controls">
+                        <option value="touch" selected>📱 Touch Screen (Swipe & On-Screen Buttons)</option>
+                        <option value="camera">📷 Webcam AI Motion Tracking (IRL)</option>
+                        <option value="keyboard">⌨️ Keyboard (Arrow Keys / WASD)</option>
+                    </select>
+                </div>
+                <div class="option-group">
+                    <label>Voice Announcer</label>
+                    <select class="custom-select" id="select-voice">
+                        <option value="enabled">Voice Cues Enabled ("Jump!", "Duck!")</option>
+                        <option value="disabled">Muted Voice</option>
+                    </select>
+                </div>
+            </div>
+
+            <div class="options-row">
+                <div class="option-group">
+                    <label>Sound & Train Horns</label>
+                    <select class="custom-select" id="select-sound">
+                        <option value="on">Sound FX, Train Horns & Bells ON</option>
+                        <option value="off">Mute All Audio</option>
+                    </select>
+                </div>
+            </div>
+
+            <!-- Start Action Button -->
+            <button class="btn-primary" id="btn-start-game">START RUN 🏃💨</button>
+        </div>
+    </div>
+
+    <!-- Game Over & Workout Report Modal -->
+    <div class="modal-overlay hidden" id="gameover-modal">
+        <div class="menu-card">
+            <h1 class="game-title" style="background: linear-gradient(135deg, #FF4500, #FFE600);">RUN COMPLETED!</h1>
+            <p class="game-subtitle">Here is your full-body workout & reflex summary</p>
+
+            <div class="report-grid">
+                <div class="report-card">
+                    <div class="title">Distance Covered</div>
+                    <div class="big-num" id="report-distance">0 m</div>
+                    <div class="subtext">Endless Jungle Run</div>
+                </div>
+                <div class="report-card">
+                    <div class="title">Coins / Score</div>
+                    <div class="big-num" id="report-score">0</div>
+                    <div class="subtext">1 Coin = 1 Point</div>
+                </div>
+                <div class="report-card">
+                    <div class="title">Reflex Reaction Speed</div>
+                    <div class="big-num" id="report-reaction">0 ms</div>
+                    <div class="subtext">Average Dodge & Jump Speed</div>
+                </div>
+            </div>
+
+            <button class="btn-primary" id="btn-restart-game">RUN AGAIN 🔄</button>
+        </div>
+    </div>
+
+    <!-- Game Scripts -->
+    <script src="audio.js?v=25"></script>
+    <script src="tracker.js?v=25"></script>
+    <script src="game.js?v=25"></script>
+
+    <!-- UI & Controller Glue Code -->
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            const gameContainer = document.getElementById('game-container');
+            const startModal = document.getElementById('start-modal');
+            const gameOverModal = document.getElementById('gameover-modal');
+            const damageFlash = document.getElementById('damage-flash');
+
+            // HUD References
+            const hudDistance = document.getElementById('hud-distance');
+            const hudScore = document.getElementById('hud-score');
+            const hudCombo = document.getElementById('hud-combo');
+            const heartEls = [
+                document.getElementById('heart-1'),
+                document.getElementById('heart-2'),
+                document.getElementById('heart-3')
+            ];
+            const feedbackPopup = document.getElementById('feedback-popup');
+            const pipStatusBadge = document.getElementById('pip-status-badge');
+            const pipCanvas = document.getElementById('pip-canvas');
+            const pipVideo = document.getElementById('pip-video');
+
+            // Modal & Touch Buttons
+            const btnStartGame = document.getElementById('btn-start-game');
+            const btnRestartGame = document.getElementById('btn-restart-game');
+            const btnRecalibrate = document.getElementById('btn-recalibrate');
+            const btnFullscreen = document.getElementById('btn-fullscreen');
+            const btnToggleCam = document.getElementById('btn-toggle-cam');
+            const selectStartingBiome = document.getElementById('select-starting-biome');
+            const selectCameraMode = document.getElementById('select-camera-mode');
+            const selectControls = document.getElementById('select-controls');
+            const selectVoice = document.getElementById('select-voice');
+            const selectSound = document.getElementById('select-sound');
+            const touchControls = document.getElementById('touch-controls');
+            const btnTouchLeft = document.getElementById('btn-touch-left');
+            const btnTouchRight = document.getElementById('btn-touch-right');
+            const btnTouchJump = document.getElementById('btn-touch-jump');
+            const btnTouchDuck = document.getElementById('btn-touch-duck');
+
+            // Auto-select touch controls on mobile/touch screens
+            const isTouchDevice = ('ontouchstart' in window) || (navigator.maxTouchPoints > 0);
+            if (isTouchDevice && selectControls) {
+                selectControls.value = 'touch';
+            }
+
+            // Wire On-Screen Touch Buttons (Works with pointerdown & click)
+            const bindTouchBtn = (btn, action) => {
+                if (!btn) return;
+                const exec = (e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    action();
+                };
+                btn.addEventListener('pointerdown', exec);
+                btn.addEventListener('click', exec);
+            };
+
+            bindTouchBtn(btnTouchLeft, () => window.templeGame.triggerMoveLeft(true));
+            bindTouchBtn(btnTouchRight, () => window.templeGame.triggerMoveRight(true));
+            bindTouchBtn(btnTouchJump, () => window.templeGame.triggerJump());
+            bindTouchBtn(btnTouchDuck, () => window.templeGame.triggerDuck());
+
+            // Full-Screen Swipe Gesture Detection (Natural Subway Surfers & Temple Run Swipes!)
+            let touchStartX = 0, touchStartY = 0, touchStartTime = 0;
+            window.addEventListener('touchstart', (e) => {
+                if (e.touches.length > 0) {
+                    touchStartX = e.touches[0].clientX;
+                    touchStartY = e.touches[0].clientY;
+                    touchStartTime = performance.now();
+                }
+            }, { passive: true });
+
+            window.addEventListener('touchend', (e) => {
+                if (!window.templeGame || !window.templeGame.isRunning) return;
+                if (e.changedTouches.length === 0) return;
+                const dx = e.changedTouches[0].clientX - touchStartX;
+                const dy = e.changedTouches[0].clientY - touchStartY;
+                const dt = performance.now() - touchStartTime;
+                const absX = Math.abs(dx);
+                const absY = Math.abs(dy);
+
+                if (dt < 650 && (absX > 25 || absY > 25)) {
+                    if (absX > absY) {
+                        if (dx > 0) window.templeGame.triggerMoveRight(true);
+                        else window.templeGame.triggerMoveLeft(true);
+                    } else {
+                        if (dy < 0) window.templeGame.triggerJump();
+                        else window.templeGame.triggerDuck();
+                    }
+                }
+            }, { passive: true });
+
+            if (btnToggleCam) {
+                btnToggleCam.addEventListener('click', () => {
+                    const nextMode = (window.templeGame.cameraMode === 'firstPerson') ? 'thirdPerson' : 'firstPerson';
+                    window.templeGame.setCameraMode(nextMode);
+                    btnToggleCam.textContent = nextMode === 'firstPerson' ? '📷 1st Person' : '📷 3rd Person';
+                });
+            }
+
+            let feedbackTimeout = null;
+            const arrowCue = document.getElementById('reflex-arrow');
+            const arrowWord = document.getElementById('reflex-arrow-word');
+            const arrowIcon = document.getElementById('reflex-arrow-icon');
+            let arrowTimeout = null;
+            let lastDist = -1, lastScore = -1, lastCombo = -1, lastLives = -1, lastAction = '';
+
+            // Tapping the big on-screen reflex cue executes it directly!
+            if (arrowCue) {
+                arrowCue.addEventListener('pointerdown', (e) => {
+                    e.stopPropagation();
+                    if (!window.templeGame || !window.templeGame.isRunning) return;
+                    const word = arrowWord.textContent;
+                    if (word === 'JUMP') window.templeGame.triggerJump();
+                    else if (word === 'DUCK') window.templeGame.triggerDuck();
+                    else if (word === 'LEFT') window.templeGame.triggerMoveLeft(true);
+                    else if (word === 'RIGHT') window.templeGame.triggerMoveRight(true);
+                });
+            }
+
+            // 1. Initialize 3D Game Engine (Zero-DOM-thrash diffed HUD updates)
+            window.templeGame.init(gameContainer, {
+                onHUDUpdate: (data) => {
+                    if (data.distance !== lastDist) {
+                        lastDist = data.distance;
+                        hudDistance.textContent = `${data.distance} m`;
+                    }
+                    if (data.score !== lastScore) {
+                        lastScore = data.score;
+                        hudScore.textContent = `🪙 ${data.score}`;
+                    }
+                    if (data.combo !== lastCombo) {
+                        lastCombo = data.combo;
+                        hudCombo.textContent = `x${data.combo} COMBO`;
+                    }
+                    if (data.lives !== lastLives) {
+                        lastLives = data.lives;
+                        for (let i = 0; i < 3; i++) {
+                            const heart = heartEls[i];
+                            if (heart) {
+                                if (i < data.lives) heart.classList.remove('lost');
+                                else heart.classList.add('lost');
+                            }
+                        }
+                    }
+                },
+
+                // Big white arrow cue (no box) at the top of the screen
+                onReflexCue: (cue) => {
+                    const map = {
+                        JUMP: ['JUMP', 0],
+                        DUCK: ['DUCK', 180],
+                        LEFT: ['LEFT', -90],
+                        RIGHT: ['RIGHT', 90]
+                    };
+                    const m = map[cue.type];
+                    if (!m) return;
+                    arrowWord.textContent = m[0];
+                    arrowIcon.style.transform = `rotate(${m[1]}deg)`;
+                    arrowCue.classList.remove('show');
+                    void arrowCue.offsetWidth;
+                    arrowCue.classList.add('show');
+                    if (arrowTimeout) clearTimeout(arrowTimeout);
+                    const hold = Math.min(1600, Math.max(700, cue.timeMs || 1000));
+                    arrowTimeout = setTimeout(() => arrowCue.classList.remove('show'), hold);
+                },
+
+                onReflexFeedback: (fb) => {
+                    arrowCue.classList.remove('show');
+                    feedbackPopup.textContent = fb.text;
+                    feedbackPopup.style.color = fb.color;
+                    feedbackPopup.classList.add('show');
+
+                    if (fb.status === 'MISS') {
+                        damageFlash.classList.add('flash');
+                        setTimeout(() => damageFlash.classList.remove('flash'), 250);
+                    }
+
+                    if (feedbackTimeout) clearTimeout(feedbackTimeout);
+                    feedbackTimeout = setTimeout(() => {
+                        feedbackPopup.classList.remove('show');
+                    }, 800);
+                },
+
+                onGameOver: (summary) => {
+                    gameOverModal.classList.remove('hidden');
+                    document.getElementById('report-distance').textContent = `${summary.distance.toLocaleString()} m`;
+                    document.getElementById('report-score').textContent = summary.score.toLocaleString();
+                    document.getElementById('report-reaction').textContent = summary.avgReaction > 0 ? `${summary.avgReaction} ms` : '---';
+                }
+            });
+
+            const setPipBadge = (txt, col) => {
+                if (lastAction !== txt) {
+                    lastAction = txt;
+                    pipStatusBadge.textContent = txt;
+                    pipStatusBadge.style.color = col;
+                }
+            };
+
+            // 2. Motion Tracker Action Handler (Zero redundant DOM writes)
+            const handleTrackerAction = (action) => {
+                if (!window.templeGame.isRunning) return;
+
+                switch (action) {
+                    case 'JUMP':
+                        setPipBadge('JUMPING', '#FF6600');
+                        window.templeGame.triggerJump();
+                        break;
+                    case 'DUCK':
+                        setPipBadge('SQUATTING', '#00E5FF');
+                        window.templeGame.triggerDuck();
+                        break;
+                    case 'LEFT':
+                        setPipBadge('LEAN LEFT', '#BF55EC');
+                        window.templeGame.triggerMoveLeft();
+                        break;
+                    case 'RIGHT':
+                        setPipBadge('LEAN RIGHT', '#2ECC71');
+                        window.templeGame.triggerMoveRight();
+                        break;
+                    case 'CENTER':
+                    case 'STAND':
+                        setPipBadge('STANDING', '#00FF66');
+                        window.templeGame.triggerCenter();
+                        break;
+                }
+            };
+
+            // Connect Real-Time Continuous 1:1 Motion Streaming
+            // Translates every slight shift of the player's body immediately into game movement
+            window.motionTracker.onContinuousMotion = (motion) => {
+                if (window.templeGame && window.templeGame.isRunning) {
+                    window.templeGame.setBodyContinuous(motion.diffX, motion.diffY);
+                }
+            };
+
+            // 3. Start Game Workflow
+            btnStartGame.addEventListener('click', async () => {
+                // Audio configuration
+                window.soundEngine.init();
+                window.soundEngine.setMuted(selectSound.value === 'off');
+                window.soundEngine.setVoiceEnabled(selectVoice.value === 'enabled');
+
+                // Starting Biome & Camera mode
+                if (selectStartingBiome) window.templeGame.setStartingBiome(selectStartingBiome.value);
+                window.templeGame.setCameraMode(selectCameraMode.value);
+                if (btnToggleCam) btnToggleCam.textContent = selectCameraMode.value === 'firstPerson' ? '📷 1st Person' : '📷 3rd Person';
+
+                // Initialize webcam tracker if camera mode selected
+                if (selectControls.value === 'camera') {
+                    pipStatusBadge.textContent = 'CONNECTING CAMERA...';
+                    const res = await window.motionTracker.init(pipVideo, pipCanvas, handleTrackerAction);
+                    if (!res.success) {
+                        alert(`Webcam notice: ${res.error}\nTouch controls & Keyboard controls are ready.`);
+                    } else {
+                        // Quick 3s calibration
+                        pipStatusBadge.textContent = 'CALIBRATING (STAND STRAIGHT)...';
+                    }
+                } else {
+                    document.getElementById('pip-container').style.display = 'none';
+                }
+
+                // On-screen touch buttons: visible for touch & camera modes, hidden only if keyboard requested
+                if (touchControls) {
+                    if (selectControls.value === 'keyboard') {
+                        touchControls.classList.add('hidden');
+                    } else {
+                        touchControls.classList.remove('hidden');
+                    }
+                }
+
+                // Hide modal and start
+                startModal.classList.add('hidden');
+                window.templeGame.start();
+            });
+
+            // Restart Button
+            btnRestartGame.addEventListener('click', () => {
+                gameOverModal.classList.add('hidden');
+                window.templeGame.start();
+            });
+
+            // Recalibrate Button
+            btnRecalibrate.addEventListener('click', () => {
+                btnRecalibrate.textContent = '⏳ Stand Straight...';
+                window.motionTracker.startCalibration(
+                    (sec) => { pipStatusBadge.textContent = `Calibrating: ${sec}s`; },
+                    () => {
+                        pipStatusBadge.textContent = 'CALIBRATED! ✅';
+                        btnRecalibrate.textContent = '🎯 Calibrate';
+                    }
+                );
+            });
+
+            // Fullscreen Button (Great for Projector / Big TV Screen)
+            btnFullscreen.addEventListener('click', () => {
+                if (!document.fullscreenElement) {
+                    document.documentElement.requestFullscreen().catch(() => {});
+                    btnFullscreen.textContent = '✖ Exit Fullscreen';
+                } else {
+                    document.exitFullscreen().catch(() => {});
+                    btnFullscreen.textContent = '⛶ Projector / Fullscreen';
+                }
+            });
+        });
+    </script>
+</body>
+</html>

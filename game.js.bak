@@ -1,0 +1,1939 @@
+// ============================================================
+// TEMPLE RUN IRL - 3D ENGINE & HIGH-FIDELITY GRAPHICS
+// Authentic sunlit tropical Mayan temple environment
+// Based on Reflex Run & Temple Run IRL
+// ============================================================
+
+class TempleGame {
+    constructor() {
+        this.container = null;
+        this.scene = null;
+        this.camera = null;
+        this.renderer = null;
+
+        // Track Configuration
+        this.laneWidth = 2.7; // ~2.7m per lane
+        this.lanes = [-this.laneWidth, 0, this.laneWidth]; // Left (-1), Center (0), Right (1)
+        this.currentLaneIndex = 1; // Center lane
+        this.targetPlayerX = 0;
+        this.playerX = 0;
+        this.playerY = 0;
+        this.playerZ = 0;
+
+        // Player Physical Movement
+        this.isJumping = false;
+        this.isDucking = false;
+        this.jumpProgress = 0;
+        this.duckProgress = 0;
+        this.continuousTargetX = 0;
+        this.continuousBodyY = 0;
+        this.rawBodyDiffX = 0;
+        this.rawBodyDiffY = 0;
+        this.jumpDuration = 0.65; // seconds
+        this.duckDuration = 0.65; // seconds
+        this.cameraMode = 'firstPerson'; // 'firstPerson' | 'thirdPerson'
+
+        // Continuous 1:1 Motion Tracking (Every slight body movement translates into game movement)
+        this.isContinuousTracking = false;
+        this.continuousTargetX = 0;
+        this.continuousBodyY = 0;
+        this.rawBodyDiffX = 0;
+        this.rawBodyDiffY = 0;
+
+        // Speed and Difficulty Progression
+        this.baseSpeed = 22; // units per second
+        this.speed = this.baseSpeed;
+        this.maxSpeed = 48;
+        this.distance = 0;
+        this.score = 0;
+        this.combo = 1;
+        this.comboStreak = 0;
+        this.lives = 3;
+        this.maxLives = 3;
+
+        // Game State
+        this.isRunning = false;
+        this.isGameOver = false;
+        this.isPaused = false;
+        this.lastTime = 0;
+
+        // Procedural World Chunks
+        this.chunkLength = 45;
+        this.visibleChunks = 7;
+        this.chunks = [];
+        this.coins = [];
+        this.animatedFlames = [];
+        this.animatedLights = [];
+
+        // Sequential Single-Trap Progression (TikTok Mechanic)
+        // Only ONE trap is active at a time; next appears ONLY after current is cleared!
+        this.activeTrap = null;
+        this.trapCooldownTimer = 1.3; // Initial run-in before first trap appears
+        this.lastTrapType = null;
+        this.reactionStartTime = 0;
+        this.reactionTimes = [];
+
+        // 3D Meshes, Materials & Textures
+        this.playerMesh = null;
+        this.materials = {};
+        this.textures = {};
+
+        // HUD Callbacks
+        this.onHUDUpdate = null;
+        this.onGameOver = null;
+        this.onReflexCue = null;
+        this.onReflexFeedback = null;
+    }
+
+    init(container, callbacks) {
+        this.container = container;
+        this.onHUDUpdate = callbacks.onHUDUpdate;
+        this.onGameOver = callbacks.onGameOver;
+        this.onReflexCue = callbacks.onReflexCue;
+        this.onReflexFeedback = callbacks.onReflexFeedback;
+
+        // 1. Create Three.js Scene
+        this.scene = new THREE.Scene();
+
+        // Vibrant tropical azure sky & atmospheric daylight haze (Exact match to TikTok video)
+        this.scene.background = new THREE.Color(0x4aaef0);
+        this.scene.fog = new THREE.FogExp2(0x7bc6f8, 0.0055);
+
+        // 2. Setup Camera
+        this.camera = new THREE.PerspectiveCamera(
+            72, // Wide cinematic perspective like the video
+            this.container.clientWidth / this.container.clientHeight,
+            0.1,
+            300
+        );
+
+        // 3. Setup High-Performance Renderer
+        this.renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
+        this.renderer.setSize(this.container.clientWidth, this.container.clientHeight);
+        this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+        this.renderer.shadowMap.enabled = true;
+        this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+        this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
+        this.renderer.toneMappingExposure = 1.15;
+        this.container.appendChild(this.renderer.domElement);
+
+        // 4. Generate Procedural High-Res Textures & PBR Materials
+        this.createProceduralTextures();
+
+        // 5. Setup Tropical Sun & Atmospheric Lighting
+        this.setupLighting();
+
+        // 6. Build Distant Sky Dome & Jungle Mountain Panorama
+        this.buildSkyAndDistantMountains();
+
+        // 7. Build Player Avatar for 3rd Person View
+        this.buildPlayerAvatar();
+
+        // 8. Event Listeners
+        window.addEventListener('resize', () => this.onWindowResize());
+        this.bindKeyboardControls();
+
+        // 9. Initial Camera Framing
+        this.camera.position.set(0, 1.8, 3);
+        this.camera.lookAt(0, 1.7, -18);
+        this.renderer.render(this.scene, this.camera);
+    }
+
+    // ============================================================
+    // HIGH-RES PROCEDURAL TEXTURES (BRIGHT SUNLIT AZTEC RUNWAY)
+    // ============================================================
+    createProceduralTextures() {
+        // --- 1. Ancient Sunlit Sandstone Runway (1024 x 1024) ---
+        const stoneCanvas = document.createElement('canvas');
+        stoneCanvas.width = 1024;
+        stoneCanvas.height = 1024;
+        const sctx = stoneCanvas.getContext('2d');
+
+        // Warm golden sandstone base matching TikTok video
+        sctx.fillStyle = '#e5c998';
+        sctx.fillRect(0, 0, 1024, 1024);
+
+        // 3 distinct runway columns matching Left, Center, Right lanes
+        const rows = 4, cols = 3;
+        const rw = 1024 / cols;
+        const rh = 1024 / rows;
+
+        for (let r = 0; r < rows; r++) {
+            for (let c = 0; c < cols; c++) {
+                const px = c * rw;
+                const py = r * rh;
+
+                // Slab base color variation (golden limestone & sunlit sandstone)
+                const hueShift = (Math.sin(r * 4 + c * 7) * 10);
+                sctx.fillStyle = `rgb(${232 + hueShift}, ${206 + hueShift * 0.9}, ${158 + hueShift * 0.7})`;
+                sctx.fillRect(px + 4, py + 4, rw - 8, rh - 8);
+
+                // Beveled top highlight (bright sunlit edge)
+                sctx.strokeStyle = 'rgba(255, 252, 240, 0.75)';
+                sctx.lineWidth = 5;
+                sctx.strokeRect(px + 6, py + 6, rw - 12, rh - 12);
+
+                // Beveled bottom shadow edge
+                sctx.strokeStyle = 'rgba(150, 115, 75, 0.4)';
+                sctx.lineWidth = 4;
+                sctx.strokeRect(px + 8, py + rh - 10, rw - 16, 2);
+
+                // Deep recessed mortar lines (defining the 3 lanes)
+                sctx.strokeStyle = '#5c4021';
+                sctx.lineWidth = 9;
+                sctx.strokeRect(px, py, rw, rh);
+
+                // Stone chisel texture & sand grain
+                for (let n = 0; n < 140; n++) {
+                    const nx = px + 8 + Math.random() * (rw - 16);
+                    const ny = py + 8 + Math.random() * (rh - 16);
+                    const isDark = Math.random() > 0.5;
+                    sctx.fillStyle = isDark ? 'rgba(95, 72, 45, 0.14)' : 'rgba(255, 250, 235, 0.22)';
+                    sctx.beginPath();
+                    sctx.arc(nx, ny, 2 + Math.random() * 4, 0, Math.PI * 2);
+                    sctx.fill();
+                }
+
+                // Weathered tropical moss in mortar seams
+                for (let m = 0; m < 25; m++) {
+                    const mx = px + (Math.random() > 0.5 ? Math.random() * 16 : rw - Math.random() * 16);
+                    const my = py + (Math.random() > 0.5 ? Math.random() * 16 : rh - Math.random() * 16);
+                    sctx.fillStyle = Math.random() > 0.4 ? 'rgba(65, 120, 45, 0.32)' : 'rgba(40, 85, 30, 0.24)';
+                    sctx.beginPath();
+                    sctx.arc(mx, my, 3 + Math.random() * 8, 0, Math.PI * 2);
+                    sctx.fill();
+                }
+            }
+        }
+
+        const stoneTexture = new THREE.CanvasTexture(stoneCanvas);
+        stoneTexture.wrapS = THREE.RepeatWrapping;
+        stoneTexture.wrapT = THREE.RepeatWrapping;
+        // 1 repeat across width aligns 3 slabs directly with 3 lanes!
+        stoneTexture.repeat.set(1, 4.5);
+        this.textures.stone = stoneTexture;
+
+        // --- 2. Ancient Mayan Ruins & Wall Texture (512 x 512) ---
+        const wallCanvas = document.createElement('canvas');
+        wallCanvas.width = 512;
+        wallCanvas.height = 512;
+        const wctx = wallCanvas.getContext('2d');
+
+        wctx.fillStyle = '#bca683';
+        wctx.fillRect(0, 0, 512, 512);
+
+        // Carved Aztec stepped pyramid glyphs & borders
+        wctx.strokeStyle = '#857053';
+        wctx.lineWidth = 6;
+        wctx.strokeRect(30, 30, 452, 452);
+        wctx.strokeRect(80, 80, 352, 352);
+        wctx.strokeRect(140, 140, 232, 232);
+
+        // Turquoise / Jade decorative temple inlays
+        wctx.fillStyle = '#1abc9c';
+        wctx.fillRect(50, 50, 24, 24);
+        wctx.fillRect(438, 50, 24, 24);
+        wctx.fillRect(50, 438, 24, 24);
+        wctx.fillRect(438, 438, 24, 24);
+        wctx.fillRect(244, 244, 24, 24);
+
+        // Lush jungle moss & aging
+        for (let i = 0; i < 90; i++) {
+            wctx.fillStyle = 'rgba(55, 110, 40, 0.22)';
+            wctx.beginPath();
+            wctx.arc(Math.random() * 512, Math.random() * 512, 5 + Math.random() * 18, 0, Math.PI * 2);
+            wctx.fill();
+        }
+
+        const wallTexture = new THREE.CanvasTexture(wallCanvas);
+        wallTexture.wrapS = THREE.RepeatWrapping;
+        wallTexture.wrapT = THREE.RepeatWrapping;
+        wallTexture.repeat.set(1, 3);
+        this.textures.wall = wallTexture;
+
+        // --- 3. Ancient Hardwood & Vine Texture (256 x 256) ---
+        const woodCanvas = document.createElement('canvas');
+        woodCanvas.width = 256;
+        woodCanvas.height = 256;
+        const wdctx = woodCanvas.getContext('2d');
+        wdctx.fillStyle = '#5c3920';
+        wdctx.fillRect(0, 0, 256, 256);
+
+        // Bark grain lines
+        wdctx.strokeStyle = '#3e2513';
+        wdctx.lineWidth = 3;
+        for (let i = 0; i < 256; i += 12) {
+            wdctx.beginPath();
+            wdctx.moveTo(0, i);
+            wdctx.bezierCurveTo(80, i + 8, 180, i - 8, 256, i + 4);
+            wdctx.stroke();
+        }
+        // Mossy creepers
+        for (let i = 0; i < 30; i++) {
+            wdctx.fillStyle = 'rgba(50, 100, 35, 0.3)';
+            wdctx.fillRect(Math.random() * 256, Math.random() * 256, 16, 12);
+        }
+        const woodTexture = new THREE.CanvasTexture(woodCanvas);
+        this.textures.wood = woodTexture;
+
+        // --- 4. Materials Setup ---
+        this.materials.road = new THREE.MeshStandardMaterial({
+            map: this.textures.stone,
+            roughness: 0.65,
+            metalness: 0.05
+        });
+
+        this.materials.wall = new THREE.MeshStandardMaterial({
+            map: this.textures.wall,
+            roughness: 0.75,
+            metalness: 0.08
+        });
+
+        this.materials.curb = new THREE.MeshStandardMaterial({
+            color: 0xcdb48e,
+            roughness: 0.6,
+            metalness: 0.05
+        });
+
+        // Authentic TikTok Hurdle Royal Blue & Glowing Cyan Materials
+        this.materials.hurdleBlue = new THREE.MeshStandardMaterial({
+            color: 0x1d549e,
+            roughness: 0.35,
+            metalness: 0.2
+        });
+
+        this.materials.hurdleCyan = new THREE.MeshStandardMaterial({
+            color: 0x00e5ff,
+            roughness: 0.25,
+            metalness: 0.25,
+            emissive: 0x007799,
+            emissiveIntensity: 0.4
+        });
+
+        this.materials.mahoganyBark = new THREE.MeshStandardMaterial({
+            color: 0x5a3219,
+            roughness: 0.9,
+            metalness: 0.05
+        });
+
+        // Vibrant Aztec Turquoise trim (as seen on the hurdle in the video!)
+        this.materials.turquoise = new THREE.MeshStandardMaterial({
+            color: 0x16a085,
+            roughness: 0.35,
+            metalness: 0.25,
+            emissive: 0x0a4d40,
+            emissiveIntensity: 0.2
+        });
+
+        this.materials.gold = new THREE.MeshStandardMaterial({
+            color: 0xffd700,
+            metalness: 0.95,
+            roughness: 0.15,
+            emissive: 0x885500,
+            emissiveIntensity: 0.35
+        });
+
+        // Multi-layered realistic fire materials
+        this.materials.fireCore = new THREE.MeshBasicMaterial({
+            color: 0xfff6a0,
+            transparent: true,
+            opacity: 0.95
+        });
+
+        this.materials.fireMid = new THREE.MeshBasicMaterial({
+            color: 0xff8c00,
+            transparent: true,
+            opacity: 0.85
+        });
+
+        this.materials.fireOuter = new THREE.MeshBasicMaterial({
+            color: 0xff2200,
+            transparent: true,
+            opacity: 0.7
+        });
+
+        this.materials.obstacleWood = new THREE.MeshStandardMaterial({
+            map: this.textures.wood,
+            roughness: 0.8
+        });
+
+        this.materials.spikes = new THREE.MeshStandardMaterial({
+            color: 0x909497,
+            metalness: 0.85,
+            roughness: 0.25
+        });
+
+        // Jungle Leaf Materials (Vibrant multi-shade tropical foliage)
+        this.materials.leaves1 = new THREE.MeshStandardMaterial({ color: 0x389e34, roughness: 0.8 });
+        this.materials.leaves2 = new THREE.MeshStandardMaterial({ color: 0x277a24, roughness: 0.85 });
+        this.materials.leaves3 = new THREE.MeshStandardMaterial({ color: 0x4fc249, roughness: 0.75 });
+    }
+
+    // ============================================================
+    // SUNLIT TROPICAL LIGHTING & ATMOSPHERE (TIKTOK VIDEO MATCH)
+    // ============================================================
+    setupLighting() {
+        // 1. Hemisphere Light (Tropical Azure Sky + Warm Jungle Ground Bounce)
+        const hemiLight = new THREE.HemisphereLight(0x7ac8ff, 0x3d7028, 0.95);
+        this.scene.add(hemiLight);
+
+        // 2. Radiant Golden Tropical Sun
+        const sun = new THREE.DirectionalLight(0xfffae6, 1.6);
+        sun.position.set(28, 48, -25);
+        sun.castShadow = true;
+        sun.shadow.mapSize.width = 1024;
+        sun.shadow.mapSize.height = 1024;
+        sun.shadow.camera.near = 1.0;
+        sun.shadow.camera.far = 150;
+        sun.shadow.camera.left = -22;
+        sun.shadow.camera.right = 22;
+        sun.shadow.camera.top = 22;
+        sun.shadow.camera.bottom = -22;
+        sun.shadow.bias = -0.0005;
+        this.scene.add(sun);
+        this.sunLight = sun;
+
+        // 3. Soft Ambient Fill
+        const ambient = new THREE.AmbientLight(0xd5eaff, 0.42);
+        this.scene.add(ambient);
+    }
+
+    // ============================================================
+    // DISTANT JUNGLE PANORAMA & BLUE SKY
+    // ============================================================
+    buildSkyAndDistantMountains() {
+        // Distant jungle canopy hills and ancient temple pyramids
+        this.distantGroup = new THREE.Group();
+
+        // 1. Sun Orb in the sky
+        const sunGeo = new THREE.SphereGeometry(18, 16, 16);
+        const sunMat = new THREE.MeshBasicMaterial({ color: 0xfffae0 });
+        const sunMesh = new THREE.Mesh(sunGeo, sunMat);
+        sunMesh.position.set(40, 80, -220);
+        this.distantGroup.add(sunMesh);
+
+        // 2. Rolling Distant Jungle Mountains
+        for (let i = -6; i <= 6; i++) {
+            const mGeo = new THREE.ConeGeometry(35 + Math.random() * 20, 60 + Math.random() * 25, 6);
+            const mMat = new THREE.MeshStandardMaterial({
+                color: (i % 2 === 0) ? 0x2d6b38 : 0x22582d,
+                roughness: 0.95
+            });
+            const mountain = new THREE.Mesh(mGeo, mMat);
+            mountain.position.set(i * 35, 10, -200 + Math.abs(i) * 10);
+            this.distantGroup.add(mountain);
+        }
+
+        // 3. Ancient Mayan Pyramid Silhouette in Distance
+        const pyrGeo = new THREE.CylinderGeometry(10, 45, 40, 4);
+        const pyrMat = new THREE.MeshStandardMaterial({ color: 0x8a7b68, roughness: 0.9 });
+        const pyramid = new THREE.Mesh(pyrGeo, pyrMat);
+        pyramid.rotation.y = Math.PI / 4;
+        pyramid.position.set(-65, 20, -185);
+        this.distantGroup.add(pyramid);
+
+        this.scene.add(this.distantGroup);
+    }
+
+    // ============================================================
+    // PLAYER AVATAR (FOR 3RD-PERSON VIEW)
+    // ============================================================
+    buildPlayerAvatar() {
+        this.playerGroup = new THREE.Group();
+
+        // Athletic Explorer Runner
+        // Torso
+        const torsoGeo = new THREE.BoxGeometry(0.8, 1.0, 0.45);
+        const torsoMat = new THREE.MeshStandardMaterial({ color: 0x2471a3, roughness: 0.7 });
+        const torso = new THREE.Mesh(torsoGeo, torsoMat);
+        torso.position.y = 1.3;
+        torso.castShadow = true;
+        this.playerGroup.add(torso);
+
+        // Head
+        const headGeo = new THREE.SphereGeometry(0.32, 16, 16);
+        const headMat = new THREE.MeshStandardMaterial({ color: 0xedbb99, roughness: 0.6 });
+        const head = new THREE.Mesh(headGeo, headMat);
+        head.position.y = 2.05;
+        head.castShadow = true;
+        this.playerGroup.add(head);
+
+        // Red Explorer Headband
+        const bandGeo = new THREE.TorusGeometry(0.33, 0.05, 8, 24);
+        const bandMat = new THREE.MeshStandardMaterial({ color: 0xc0392b });
+        const band = new THREE.Mesh(bandGeo, bandMat);
+        band.rotation.x = Math.PI / 2;
+        band.position.y = 2.12;
+        this.playerGroup.add(band);
+
+        // Legs
+        const legGeo = new THREE.BoxGeometry(0.32, 0.8, 0.35);
+        const legMat = new THREE.MeshStandardMaterial({ color: 0x2c3e50, roughness: 0.8 });
+
+        this.leftLeg = new THREE.Mesh(legGeo, legMat);
+        this.leftLeg.position.set(-0.24, 0.5, 0);
+        this.leftLeg.castShadow = true;
+        this.playerGroup.add(this.leftLeg);
+
+        this.rightLeg = new THREE.Mesh(legGeo, legMat);
+        this.rightLeg.position.set(0.24, 0.5, 0);
+        this.rightLeg.castShadow = true;
+        this.playerGroup.add(this.rightLeg);
+
+        // Arms
+        const armGeo = new THREE.BoxGeometry(0.22, 0.75, 0.25);
+        const armMat = new THREE.MeshStandardMaterial({ color: 0xedbb99, roughness: 0.6 });
+
+        this.leftArm = new THREE.Mesh(armGeo, armMat);
+        this.leftArm.position.set(-0.55, 1.25, 0);
+        this.leftArm.castShadow = true;
+        this.playerGroup.add(this.leftArm);
+
+        this.rightArm = new THREE.Mesh(armGeo, armMat);
+        this.rightArm.position.set(0.55, 1.25, 0);
+        this.rightArm.castShadow = true;
+        this.playerGroup.add(this.rightArm);
+
+        this.scene.add(this.playerGroup);
+
+        // Hide avatar by default in 1st person mode
+        if (this.cameraMode === 'firstPerson') {
+            this.playerGroup.visible = false;
+        }
+    }
+
+    // ============================================================
+    // PROCEDURAL WORLD CHUNK BUILDER (SUNLIT TEMPLE & JUNGLE)
+    // ============================================================
+    generateChunk(zPos, index) {
+        const chunk = new THREE.Group();
+        chunk.position.z = zPos;
+
+        const roadWidth = this.laneWidth * 3 + 1.6; // ~9.7m wide runway
+
+        // 1. Grand Sunlit Sandstone Runway Surface
+        const roadGeo = new THREE.PlaneGeometry(roadWidth, this.chunkLength);
+        const road = new THREE.Mesh(roadGeo, this.materials.road);
+        road.rotation.x = -Math.PI / 2;
+        road.receiveShadow = true;
+        chunk.add(road);
+
+        // 2. Carved Sandstone Balustrades / Parapets along both edges
+        [-1, 1].forEach((side) => {
+            const curbX = side * (roadWidth / 2 + 0.3);
+
+            // Lower base curb
+            const curbGeo = new THREE.BoxGeometry(0.6, 0.45, this.chunkLength);
+            const curb = new THREE.Mesh(curbGeo, this.materials.curb);
+            curb.position.set(curbX, 0.225, 0);
+            curb.castShadow = true;
+            curb.receiveShadow = true;
+            chunk.add(curb);
+
+            // Upper balustrade wall with decorative turquoise stone trim
+            const railGeo = new THREE.BoxGeometry(0.4, 0.3, this.chunkLength);
+            const rail = new THREE.Mesh(railGeo, this.materials.turquoise);
+            rail.position.set(curbX, 0.55, 0);
+            chunk.add(rail);
+        });
+
+        // 3. Majestic Mayan Stone Archway (Spans across the track every 3 chunks)
+        if (index % 3 === 0 && index > 0) {
+            this.buildStoneArchway(chunk, roadWidth);
+        }
+
+        // 4. Ancient Temple Ruins & Columns flanking runway
+        this.buildRuinColumnsAndWalls(chunk, roadWidth);
+
+        // 5. Rich Multi-Tiered Tropical Jungle Trees & Hanging Foliage
+        this.buildTropicalJungleFoliage(chunk, roadWidth);
+
+        // 6. Golden Flaming Braziers along balustrades
+        this.buildGoldenBraziers(chunk, roadWidth);
+
+        // 7. Chains of Gleaming Gold Coins along safe lanes
+        this.spawnCoins(chunk, zPos);
+
+        this.scene.add(chunk);
+        this.chunks.push({ mesh: chunk, z: zPos, index: index });
+    }
+
+    // --- GRAND STONE ARCHWAY SPANNING TRACK ---
+    buildStoneArchway(chunk, roadWidth) {
+        const arch = new THREE.Group();
+        arch.position.set(0, 0, (Math.random() - 0.5) * 12);
+
+        // Left Pillar
+        const pLeftGeo = new THREE.BoxGeometry(1.6, 7.5, 1.6);
+        const pLeft = new THREE.Mesh(pLeftGeo, this.materials.wall);
+        pLeft.position.set(-roadWidth / 2 - 0.7, 3.75, 0);
+        pLeft.castShadow = true;
+        arch.add(pLeft);
+
+        // Right Pillar
+        const pRightGeo = new THREE.BoxGeometry(1.6, 7.5, 1.6);
+        const pRight = new THREE.Mesh(pRightGeo, this.materials.wall);
+        pRight.position.set(roadWidth / 2 + 0.7, 3.75, 0);
+        pRight.castShadow = true;
+        arch.add(pRight);
+
+        // Overhead Lintel Arch
+        const lintelGeo = new THREE.BoxGeometry(roadWidth + 3.2, 1.6, 1.8);
+        const lintel = new THREE.Mesh(lintelGeo, this.materials.wall);
+        lintel.position.set(0, 7.8, 0);
+        lintel.castShadow = true;
+        arch.add(lintel);
+
+        // Turquoise Stone Medallion in center of arch
+        const crestGeo = new THREE.CylinderGeometry(0.9, 0.9, 0.4, 8);
+        const crest = new THREE.Mesh(crestGeo, this.materials.turquoise);
+        crest.rotation.x = Math.PI / 2;
+        crest.position.set(0, 7.8, 1.0);
+        arch.add(crest);
+
+        // Hanging tropical vines from archway
+        for (let v = -roadWidth / 2; v <= roadWidth / 2; v += 1.8) {
+            const vHeight = 1.2 + Math.random() * 2.2;
+            const vineGeo = new THREE.CylinderGeometry(0.06, 0.04, vHeight, 6);
+            const vine = new THREE.Mesh(vineGeo, this.materials.leaves2);
+            vine.position.set(v, 7.0 - vHeight / 2, 0.8);
+            arch.add(vine);
+        }
+
+        // Tropical Mahogany Tree Trunk & Lush Canopy (framing the arch as seen in TikTok cover)
+        const treeGroup = new THREE.Group();
+        const trunkGeo = new THREE.CylinderGeometry(0.7, 1.1, 10, 8);
+        const trunk = new THREE.Mesh(trunkGeo, this.materials.mahoganyBark);
+        trunk.position.set(-roadWidth / 2 - 1.8, 5.0, -0.6);
+        trunk.rotation.z = -0.08;
+        trunk.castShadow = true;
+        treeGroup.add(trunk);
+
+        // Arching Branch over the lintel
+        const branchGeo = new THREE.CylinderGeometry(0.38, 0.55, roadWidth * 0.9, 7);
+        const branch = new THREE.Mesh(branchGeo, this.materials.mahoganyBark);
+        branch.rotation.z = Math.PI / 2 + 0.12;
+        branch.position.set(-roadWidth * 0.1, 9.1, -0.5);
+        branch.castShadow = true;
+        treeGroup.add(branch);
+
+        // Lush Emerald Canopy Foliage Clusters framing top of view
+        const leafClusters = [
+            { x: -roadWidth / 2 - 2.0, y: 10.2, z: -0.5, r: 2.4, mat: this.materials.leaves1 },
+            { x: -roadWidth * 0.35, y: 10.6, z: -0.3, r: 2.2, mat: this.materials.leaves2 },
+            { x: 0, y: 10.8, z: -0.4, r: 2.6, mat: this.materials.leaves1 },
+            { x: roadWidth * 0.35, y: 10.4, z: -0.6, r: 2.1, mat: this.materials.leaves2 },
+            { x: -roadWidth * 0.15, y: 11.5, z: 0.2, r: 2.5, mat: this.materials.leaves1 }
+        ];
+
+        leafClusters.forEach((c) => {
+            const puffGeo = new THREE.DodecahedronGeometry(c.r, 1);
+            const puff = new THREE.Mesh(puffGeo, c.mat);
+            puff.position.set(c.x, c.y, c.z);
+            puff.castShadow = true;
+            treeGroup.add(puff);
+        });
+
+        arch.add(treeGroup);
+
+        chunk.add(arch);
+    }
+
+    // --- TEMPLE RUIN COLUMNS & BROKEN WALLS ---
+    buildRuinColumnsAndWalls(chunk, roadWidth) {
+        [-1, 1].forEach((side) => {
+            for (let i = 0; i < 2; i++) {
+                const zOffset = -15 + i * 28 + (Math.random() - 0.5) * 6;
+                const pX = side * (roadWidth / 2 + 2.2 + Math.random() * 2.5);
+
+                // Carved ancient stone column
+                const colGeo = new THREE.CylinderGeometry(0.85, 0.95, 6 + Math.random() * 3, 8);
+                const col = new THREE.Mesh(colGeo, this.materials.wall);
+                col.position.set(pX, 3.5, zOffset);
+                col.castShadow = true;
+                chunk.add(col);
+
+                // Ornate column capital
+                const capGeo = new THREE.BoxGeometry(2.1, 0.6, 2.1);
+                const cap = new THREE.Mesh(capGeo, this.materials.wall);
+                cap.position.set(pX, 7.0, zOffset);
+                chunk.add(cap);
+            }
+        });
+    }
+
+    // --- LUSH MULTI-TIERED TROPICAL JUNGLE TREES ---
+    buildTropicalJungleFoliage(chunk, roadWidth) {
+        [-1, 1].forEach((side) => {
+            for (let t = 0; t < 3; t++) {
+                const treeX = side * (roadWidth / 2 + 5.5 + Math.random() * 8);
+                const treeZ = -18 + t * 18 + (Math.random() - 0.5) * 6;
+
+                // Tree Trunk
+                const trunkGeo = new THREE.CylinderGeometry(0.55, 0.85, 10 + Math.random() * 3, 8);
+                const trunk = new THREE.Mesh(trunkGeo, this.materials.obstacleWood);
+                trunk.position.set(treeX, 5, treeZ);
+                trunk.castShadow = true;
+                chunk.add(trunk);
+
+                // Multi-tiered vibrant canopy leaves (Puffs of green foliage)
+                const leafMats = [this.materials.leaves1, this.materials.leaves2, this.materials.leaves3];
+                for (let c = 0; c < 4; c++) {
+                    const radius = 2.8 + Math.random() * 1.5;
+                    const puffGeo = new THREE.DodecahedronGeometry(radius);
+                    const mat = leafMats[Math.floor(Math.random() * leafMats.length)];
+                    const puff = new THREE.Mesh(puffGeo, mat);
+                    puff.position.set(
+                        treeX + (Math.random() - 0.5) * 3,
+                        9.5 + c * 2.0,
+                        treeZ + (Math.random() - 0.5) * 3
+                    );
+                    puff.castShadow = true;
+                    chunk.add(puff);
+                }
+            }
+        });
+    }
+
+    // --- GOLDEN FLAMING BRAZIERS ALONG BALUSTRADES ---
+    buildGoldenBraziers(chunk, roadWidth) {
+        [-1, 1].forEach((side) => {
+            const torchGroup = new THREE.Group();
+            torchGroup.position.set(side * (roadWidth / 2 + 0.3), 0.7, (Math.random() - 0.5) * 20);
+
+            // Carved stone pedestal
+            const pedGeo = new THREE.CylinderGeometry(0.3, 0.35, 1.0, 8);
+            const ped = new THREE.Mesh(pedGeo, this.materials.wall);
+            torchGroup.add(ped);
+
+            // Golden fire bowl
+            const bowlGeo = new THREE.CylinderGeometry(0.4, 0.2, 0.4, 8);
+            const bowl = new THREE.Mesh(bowlGeo, this.materials.gold);
+            bowl.position.y = 0.6;
+            torchGroup.add(bowl);
+
+            // Blazing flame
+            const flameGeo = new THREE.ConeGeometry(0.25, 0.75, 8);
+            const flame = new THREE.Mesh(flameGeo, this.materials.fireMid);
+            flame.position.y = 1.0;
+            torchGroup.add(flame);
+
+            // Warm torch point light
+            const light = new THREE.PointLight(0xff7700, 1.0, 12);
+            light.position.y = 1.1;
+            torchGroup.add(light);
+
+            chunk.add(torchGroup);
+            this.animatedFlames.push({ flame: flame, baseScale: 1.0 });
+            this.animatedLights.push({ light: light, baseIntensity: 1.0 });
+        });
+    }
+
+    // ============================================================
+    // SEQUENTIAL TRAP BUILDERS (TIKTOK MECHANIC)
+    // Only one trap is visible at a time. The next trap only appears
+    // after the current one has been cleared!
+    // ============================================================
+
+    // 1. FIRE HURDLE BUILDER (JUMP)
+    buildFireHurdle(zPos) {
+        const fireTrap = new THREE.Group();
+        fireTrap.position.set(0, 0, zPos);
+
+        const roadSpan = this.laneWidth * 3 + 0.6;
+
+        // Low Royal Blue Hurdle Bar with Glowing Cyan Border Trim (TikTok IRL Match!)
+        const baseGeo = new THREE.BoxGeometry(roadSpan, 0.48, 0.85);
+        const baseBar = new THREE.Mesh(baseGeo, this.materials.hurdleBlue);
+        baseBar.position.y = 0.24;
+        baseBar.castShadow = true;
+        baseBar.receiveShadow = true;
+        fireTrap.add(baseBar);
+
+        // Glowing Cyan Aztec Trim along the top and edges of hurdle
+        const trimGeo = new THREE.BoxGeometry(roadSpan + 0.1, 0.14, 0.92);
+        const trim = new THREE.Mesh(trimGeo, this.materials.hurdleCyan);
+        trim.position.y = 0.52;
+        fireTrap.add(trim);
+
+        // Cyan accent posts on left & right sides
+        [-roadSpan / 2, roadSpan / 2].forEach((xSide) => {
+            const sidePostGeo = new THREE.BoxGeometry(0.35, 0.75, 0.95);
+            const sidePost = new THREE.Mesh(sidePostGeo, this.materials.hurdleBlue);
+            sidePost.position.set(xSide, 0.375, 0);
+            fireTrap.add(sidePost);
+
+            const postCapGeo = new THREE.BoxGeometry(0.42, 0.12, 1.02);
+            const postCap = new THREE.Mesh(postCapGeo, this.materials.hurdleCyan);
+            postCap.position.set(xSide, 0.78, 0);
+            fireTrap.add(postCap);
+        });
+
+        // 7 Roaring Vertical Flame Jets Blazing Upwards!
+        const flameJetGroup = new THREE.Group();
+        const flameFlakes = [];
+        const flameCount = 7;
+        const stepX = roadSpan / (flameCount + 1);
+
+        for (let f = 1; f <= flameCount; f++) {
+            const fx = -roadSpan / 2 + f * stepX;
+
+            const outerGeo = new THREE.ConeGeometry(0.35, 1.45, 8);
+            const outerFlame = new THREE.Mesh(outerGeo, this.materials.fireOuter);
+            outerFlame.position.set(fx, 1.15, 0);
+            flameJetGroup.add(outerFlame);
+
+            const midGeo = new THREE.ConeGeometry(0.24, 1.2, 8);
+            const midFlame = new THREE.Mesh(midGeo, this.materials.fireMid);
+            midFlame.position.set(fx, 1.05, 0);
+            flameJetGroup.add(midFlame);
+
+            const coreGeo = new THREE.ConeGeometry(0.14, 0.85, 8);
+            const coreFlame = new THREE.Mesh(coreGeo, this.materials.fireCore);
+            coreFlame.position.set(fx, 0.9, 0);
+            flameJetGroup.add(coreFlame);
+
+            flameFlakes.push(outerFlame, midFlame);
+        }
+
+        fireTrap.add(flameJetGroup);
+
+        const fireLight = new THREE.PointLight(0xff5500, 1.8, 16);
+        fireLight.position.set(0, 1.5, 0);
+        fireTrap.add(fireLight);
+
+        return {
+            type: 'JUMP',
+            group: fireTrap,
+            flames: flameFlakes,
+            worldZ: zPos,
+            requiredAction: 'JUMP',
+            label: 'JUMP!',
+            color: '#FF6600',
+            prompted: false,
+            passed: false,
+            cleared: false,
+            hitRadius: 1.6,
+            lane: 'ALL'
+        };
+    }
+
+    // 2. SPIKED TEMPLE LINTEL BUILDER (DUCK / SQUAT)
+    buildSpikedLintel(zPos) {
+        const lintelGroup = new THREE.Group();
+        lintelGroup.position.set(0, 2.35, zPos);
+
+        const roadSpan = this.laneWidth * 3 + 1.2;
+
+        const beamGeo = new THREE.CylinderGeometry(0.48, 0.48, roadSpan, 12);
+        const beam = new THREE.Mesh(beamGeo, this.materials.obstacleWood);
+        beam.rotation.z = Math.PI / 2;
+        beam.castShadow = true;
+        lintelGroup.add(beam);
+
+        for (let b = -roadSpan / 2 + 1; b <= roadSpan / 2 - 1; b += 2.2) {
+            const bandGeo = new THREE.TorusGeometry(0.5, 0.06, 8, 16);
+            const band = new THREE.Mesh(bandGeo, this.materials.spikes);
+            band.position.set(b, 0, 0);
+            lintelGroup.add(band);
+        }
+
+        for (let s = -roadSpan / 2 + 0.8; s <= roadSpan / 2 - 0.8; s += 0.85) {
+            const sGeo = new THREE.ConeGeometry(0.18, 0.65, 6);
+            const spike = new THREE.Mesh(sGeo, this.materials.spikes);
+            spike.rotation.x = Math.PI;
+            spike.position.set(s, -0.45, 0);
+            lintelGroup.add(spike);
+        }
+
+        for (let v = -roadSpan / 2 + 1.2; v <= roadSpan / 2 - 1.2; v += 1.8) {
+            const vGeo = new THREE.CylinderGeometry(0.05, 0.03, 1.2, 6);
+            const vine = new THREE.Mesh(vGeo, this.materials.leaves2);
+            vine.position.set(v, -0.6, 0.2);
+            lintelGroup.add(vine);
+        }
+
+        return {
+            type: 'DUCK',
+            group: lintelGroup,
+            worldZ: zPos,
+            requiredAction: 'DUCK',
+            label: 'DUCK / SQUAT!',
+            color: '#00E5FF',
+            prompted: false,
+            passed: false,
+            cleared: false,
+            hitRadius: 1.5,
+            lane: 'ALL'
+        };
+    }
+
+    // 3. ANCIENT MAYAN IDOL BARRIER BUILDER (LEAN LEFT / RIGHT)
+    buildIdolBarrier(zPos, openLane) {
+        const barrierGroup = new THREE.Group();
+        barrierGroup.position.set(0, 0, zPos);
+
+        const blockedLanes = (openLane === -1) ? [0, 1] : [-1, 0];
+
+        blockedLanes.forEach((laneIdx) => {
+            const posX = this.lanes[laneIdx + 1];
+
+            const idolGeo = new THREE.BoxGeometry(1.6, 2.2, 1.4);
+            const idol = new THREE.Mesh(idolGeo, this.materials.wall);
+            idol.position.set(posX, 1.1, 0);
+            idol.castShadow = true;
+            barrierGroup.add(idol);
+
+            const emblemGeo = new THREE.CylinderGeometry(0.55, 0.55, 0.15, 12);
+            const emblem = new THREE.Mesh(emblemGeo, this.materials.gold);
+            emblem.rotation.x = Math.PI / 2;
+            emblem.position.set(posX, 1.4, 0.75);
+            barrierGroup.add(emblem);
+
+            for (let r = 0; r < 3; r++) {
+                const chunkGeo = new THREE.DodecahedronGeometry(0.35 + Math.random() * 0.2);
+                const chunkMesh = new THREE.Mesh(chunkGeo, this.materials.curb);
+                chunkMesh.position.set(
+                    posX + (Math.random() - 0.5) * 0.9,
+                    0.3,
+                    (Math.random() - 0.5) * 0.9
+                );
+                barrierGroup.add(chunkMesh);
+            }
+        });
+
+        const isLeftDodge = (openLane === -1);
+        return {
+            type: isLeftDodge ? 'LEFT' : 'RIGHT',
+            group: barrierGroup,
+            worldZ: zPos,
+            requiredAction: isLeftDodge ? 'LEFT' : 'RIGHT',
+            targetLane: openLane,
+            label: isLeftDodge ? 'LEAN LEFT!' : 'LEAN RIGHT!',
+            color: isLeftDodge ? '#BF55EC' : '#2ECC71',
+            prompted: false,
+            passed: false,
+            cleared: false,
+            hitRadius: 1.4,
+            lane: 'SELECTIVE'
+        };
+    }
+
+    // 4. ANCIENT TWISTED JUNGLE ROOTS (JUMP)
+    buildTreeRoots(zPos) {
+        const rootTrap = new THREE.Group();
+        rootTrap.position.set(0, 0, zPos);
+
+        const roadSpan = this.laneWidth * 3 + 0.8;
+
+        // Main sprawling root trunk across runway
+        const trunkGeo = new THREE.CylinderGeometry(0.36, 0.48, roadSpan, 10, 3);
+        const trunk = new THREE.Mesh(trunkGeo, this.materials.obstacleWood);
+        trunk.rotation.z = Math.PI / 2;
+        trunk.position.y = 0.35;
+        trunk.castShadow = true;
+        trunk.receiveShadow = true;
+        rootTrap.add(trunk);
+
+        // Twisted secondary branch roots knobby across the floor
+        for (let i = -roadSpan / 2 + 1; i <= roadSpan / 2 - 1; i += 1.8) {
+            const knotGeo = new THREE.DodecahedronGeometry(0.38 + Math.random() * 0.15);
+            const knot = new THREE.Mesh(knotGeo, this.materials.obstacleWood);
+            knot.position.set(i + (Math.random() - 0.5) * 0.6, 0.38, (Math.random() - 0.5) * 0.5);
+            knot.castShadow = true;
+            rootTrap.add(knot);
+
+            const spurGeo = new THREE.ConeGeometry(0.12, 0.55, 6);
+            const spur = new THREE.Mesh(spurGeo, this.materials.obstacleWood);
+            spur.position.set(i + 0.3, 0.55, 0.2);
+            spur.rotation.z = (Math.random() - 0.5) * 0.4;
+            rootTrap.add(spur);
+
+            const mossGeo = new THREE.SphereGeometry(0.25, 6, 6);
+            const moss = new THREE.Mesh(mossGeo, this.materials.leaves1);
+            moss.position.set(i, 0.45, 0.15);
+            rootTrap.add(moss);
+        }
+
+        return {
+            type: 'JUMP',
+            subType: 'TREE_ROOTS',
+            group: rootTrap,
+            worldZ: zPos,
+            requiredAction: 'JUMP',
+            label: 'JUMP!',
+            color: '#FF6600',
+            prompted: false,
+            passed: false,
+            cleared: false,
+            hitRadius: 1.5,
+            lane: 'ALL'
+        };
+    }
+
+    // 5. COLLAPSED ABYSS CHASM GAP (JUMP)
+    buildChasmGap(zPos) {
+        const chasmTrap = new THREE.Group();
+        chasmTrap.position.set(0, 0, zPos);
+
+        const roadSpan = this.laneWidth * 3 + 1.6;
+        const gapLength = 3.6;
+
+        // Dark abyss void plane covering the ground level
+        const voidGeo = new THREE.PlaneGeometry(roadSpan, gapLength);
+        const voidMat = new THREE.MeshBasicMaterial({ color: 0x05080c });
+        const voidMesh = new THREE.Mesh(voidGeo, voidMat);
+        voidMesh.rotation.x = -Math.PI / 2;
+        voidMesh.position.y = 0.02;
+        chasmTrap.add(voidMesh);
+
+        // Fractured stone lip on front and back
+        [-gapLength / 2, gapLength / 2].forEach((edgeZ) => {
+            for (let x = -roadSpan / 2 + 0.6; x <= roadSpan / 2 - 0.6; x += 1.2) {
+                const chunkGeo = new THREE.BoxGeometry(1.0, 0.25, 0.4);
+                const chunk = new THREE.Mesh(chunkGeo, this.materials.curb);
+                chunk.position.set(x + (Math.random() - 0.5) * 0.2, 0.1, edgeZ);
+                chunk.castShadow = true;
+                chasmTrap.add(chunk);
+            }
+        });
+
+        // Broken floating/falling stone slabs in the abyss
+        for (let s = 0; s < 4; s++) {
+            const slabGeo = new THREE.BoxGeometry(0.7, 0.3, 0.6);
+            const slab = new THREE.Mesh(slabGeo, this.materials.curb);
+            slab.position.set((Math.random() - 0.5) * (roadSpan - 2), -0.6 - Math.random() * 0.8, (Math.random() - 0.5) * 2);
+            slab.rotation.set(Math.random() * 0.5, Math.random() * 0.5, Math.random() * 0.5);
+            chasmTrap.add(slab);
+        }
+
+        // Abyss glowing mist / fog
+        const mistLight = new THREE.PointLight(0x4488aa, 1.2, 12);
+        mistLight.position.set(0, -1.0, 0);
+        chasmTrap.add(mistLight);
+
+        return {
+            type: 'JUMP',
+            subType: 'CHASM_GAP',
+            group: chasmTrap,
+            worldZ: zPos,
+            requiredAction: 'JUMP',
+            label: 'JUMP!',
+            color: '#FF6600',
+            prompted: false,
+            passed: false,
+            cleared: false,
+            hitRadius: 1.8,
+            lane: 'ALL'
+        };
+    }
+
+    // 6. LOW CRUMBLING MAYAN STONE PORTAL ARCH (DUCK / SQUAT)
+    buildStoneArchGate(zPos) {
+        const gateGroup = new THREE.Group();
+        gateGroup.position.set(0, 0, zPos);
+
+        const roadSpan = this.laneWidth * 3 + 1.6;
+
+        // Low heavy carved stone portal lintel hanging at chest/neck height
+        const lintelGeo = new THREE.BoxGeometry(roadSpan, 1.1, 1.4);
+        const lintel = new THREE.Mesh(lintelGeo, this.materials.wall);
+        lintel.position.set(0, 2.35, 0);
+        lintel.castShadow = true;
+        gateGroup.add(lintel);
+
+        // Carved Aztec stepped relief along the underside
+        const trimGeo = new THREE.BoxGeometry(roadSpan - 0.4, 0.18, 1.5);
+        const trim = new THREE.Mesh(trimGeo, this.materials.turquoise);
+        trim.position.set(0, 1.78, 0);
+        gateGroup.add(trim);
+
+        // Hanging jungle vines that brush past the runner's head
+        for (let v = -roadSpan / 2 + 1; v <= roadSpan / 2 - 1; v += 1.4) {
+            const vHeight = 0.8 + Math.random() * 0.6;
+            const vineGeo = new THREE.CylinderGeometry(0.04, 0.03, vHeight, 6);
+            const vine = new THREE.Mesh(vineGeo, this.materials.leaves2);
+            vine.position.set(v, 1.75 - vHeight / 2, (Math.random() - 0.5) * 0.4);
+            gateGroup.add(vine);
+        }
+
+        // Side support posts
+        [-1, 1].forEach((side) => {
+            const postGeo = new THREE.BoxGeometry(0.9, 3.2, 1.2);
+            const post = new THREE.Mesh(postGeo, this.materials.curb);
+            post.position.set(side * (roadSpan / 2 + 0.3), 1.6, 0);
+            post.castShadow = true;
+            gateGroup.add(post);
+        });
+
+        return {
+            type: 'DUCK',
+            subType: 'STONE_ARCH_GATE',
+            group: gateGroup,
+            worldZ: zPos,
+            requiredAction: 'DUCK',
+            label: 'DUCK / SQUAT!',
+            color: '#00E5FF',
+            prompted: false,
+            passed: false,
+            cleared: false,
+            hitRadius: 1.5,
+            lane: 'ALL'
+        };
+    }
+
+    // 7. OVERHEAD ROARING FLAME JETS TRAP (DUCK / SQUAT)
+    buildOverheadFlameTrap(zPos) {
+        const flameGroup = new THREE.Group();
+        flameGroup.position.set(0, 0, zPos);
+
+        const roadSpan = this.laneWidth * 3 + 1.2;
+
+        // Overhead bronze burner pipe at y = 2.7m
+        const pipeGeo = new THREE.CylinderGeometry(0.32, 0.32, roadSpan, 12);
+        const pipe = new THREE.Mesh(pipeGeo, this.materials.spikes);
+        pipe.rotation.z = Math.PI / 2;
+        pipe.position.y = 2.7;
+        pipe.castShadow = true;
+        flameGroup.add(pipe);
+
+        [-1, 1].forEach((side) => {
+            const brGeo = new THREE.BoxGeometry(0.6, 3.2, 0.6);
+            const br = new THREE.Mesh(brGeo, this.materials.curb);
+            br.position.set(side * (roadSpan / 2 + 0.3), 1.6, 0);
+            flameGroup.add(br);
+        });
+
+        // 7 Roaring Downward Fire Jets Blazing from overhead pipe!
+        const flameFlakes = [];
+        const flameCount = 7;
+        const stepX = roadSpan / (flameCount + 1);
+
+        for (let f = 1; f <= flameCount; f++) {
+            const fx = -roadSpan / 2 + f * stepX;
+
+            const outerGeo = new THREE.ConeGeometry(0.35, 1.35, 8);
+            const outerFlame = new THREE.Mesh(outerGeo, this.materials.fireOuter);
+            outerFlame.rotation.x = Math.PI; // point downwards
+            outerFlame.position.set(fx, 1.95, 0);
+            flameGroup.add(outerFlame);
+
+            const midGeo = new THREE.ConeGeometry(0.22, 1.15, 8);
+            const midFlame = new THREE.Mesh(midGeo, this.materials.fireMid);
+            midFlame.rotation.x = Math.PI;
+            midFlame.position.set(fx, 2.05, 0);
+            flameGroup.add(midFlame);
+
+            const coreGeo = new THREE.ConeGeometry(0.12, 0.75, 8);
+            const coreFlame = new THREE.Mesh(coreGeo, this.materials.fireCore);
+            coreFlame.rotation.x = Math.PI;
+            coreFlame.position.set(fx, 2.2, 0);
+            flameGroup.add(coreFlame);
+
+            flameFlakes.push(outerFlame, midFlame);
+        }
+
+        const fireLight = new THREE.PointLight(0xff6600, 2.0, 15);
+        fireLight.position.set(0, 2.0, 0);
+        flameGroup.add(fireLight);
+
+        return {
+            type: 'DUCK',
+            subType: 'OVERHEAD_FLAME',
+            group: flameGroup,
+            flames: flameFlakes,
+            worldZ: zPos,
+            requiredAction: 'DUCK',
+            label: 'DUCK / SQUAT!',
+            color: '#00E5FF',
+            prompted: false,
+            passed: false,
+            cleared: false,
+            hitRadius: 1.5,
+            lane: 'ALL'
+        };
+    }
+
+    // 8. GIANT ROLLING AZTEC STONE BOULDER (LEAN LEFT / RIGHT)
+    buildRollingBoulder(zPos, openLane) {
+        const boulderGroup = new THREE.Group();
+        boulderGroup.position.set(0, 0, zPos);
+
+        const boulderX = (openLane === -1) ? 1.35 : -1.35;
+        const boulderRadius = 1.35;
+
+        // Giant Aztec carved stone boulder sphere
+        const sphereGeo = new THREE.DodecahedronGeometry(boulderRadius, 2);
+        const boulderMesh = new THREE.Mesh(sphereGeo, this.materials.curb);
+        boulderMesh.position.set(boulderX, boulderRadius, 0);
+        boulderMesh.castShadow = true;
+        boulderMesh.receiveShadow = true;
+        boulderGroup.add(boulderMesh);
+
+        // Golden Aztec Sun God medallion on the front
+        const emblemGeo = new THREE.CylinderGeometry(0.7, 0.7, 0.15, 12);
+        const emblem = new THREE.Mesh(emblemGeo, this.materials.gold);
+        emblem.rotation.x = Math.PI / 2;
+        emblem.position.set(boulderX, boulderRadius, boulderRadius * 0.95);
+        boulderGroup.add(emblem);
+
+        // Dust / gravel around base
+        for (let d = 0; d < 5; d++) {
+            const dGeo = new THREE.DodecahedronGeometry(0.25 + Math.random() * 0.15);
+            const dust = new THREE.Mesh(dGeo, this.materials.wall);
+            dust.position.set(
+                boulderX + (Math.random() - 0.5) * 1.8,
+                0.2,
+                (Math.random() - 0.5) * 1.8
+            );
+            boulderGroup.add(dust);
+        }
+
+        const isLeftDodge = (openLane === -1);
+        return {
+            type: isLeftDodge ? 'LEFT' : 'RIGHT',
+            subType: 'ROLLING_BOULDER',
+            group: boulderGroup,
+            boulderMesh: boulderMesh,
+            worldZ: zPos,
+            requiredAction: isLeftDodge ? 'LEFT' : 'RIGHT',
+            targetLane: openLane,
+            label: isLeftDodge ? 'LEAN LEFT!' : 'LEAN RIGHT!',
+            color: isLeftDodge ? '#BF55EC' : '#2ECC71',
+            prompted: false,
+            passed: false,
+            cleared: false,
+            hitRadius: 1.6,
+            lane: 'SELECTIVE'
+        };
+    }
+
+    // 9. COLLAPSED HALF-TERRACE CANYON EDGE (LEAN LEFT / RIGHT)
+    buildCollapsedEdge(zPos, openLane) {
+        const edgeGroup = new THREE.Group();
+        edgeGroup.position.set(0, 0, zPos);
+
+        const roadSpan = this.laneWidth * 3 + 1.6;
+        const sectionLength = 7.0;
+
+        const brokenX = (openLane === -1) ? 1.4 : -1.4;
+        const brokenWidth = this.laneWidth * 2 + 0.4;
+
+        // Dark abyss void beneath the broken section
+        const voidGeo = new THREE.PlaneGeometry(brokenWidth, sectionLength);
+        const voidMat = new THREE.MeshBasicMaterial({ color: 0x070b10 });
+        const voidMesh = new THREE.Mesh(voidGeo, voidMat);
+        voidMesh.rotation.x = -Math.PI / 2;
+        voidMesh.position.set(brokenX, 0.02, 0);
+        edgeGroup.add(voidMesh);
+
+        // Jagged broken stone chunks along fracture line
+        const fractureX = (openLane === -1) ? -this.laneWidth / 2 : this.laneWidth / 2;
+        for (let z = -sectionLength / 2 + 0.5; z <= sectionLength / 2 - 0.5; z += 1.1) {
+            const chunkGeo = new THREE.BoxGeometry(0.5, 0.45, 0.9);
+            const chunk = new THREE.Mesh(chunkGeo, this.materials.curb);
+            chunk.position.set(fractureX + (Math.random() - 0.5) * 0.2, 0.2, z);
+            chunk.rotation.y = (Math.random() - 0.5) * 0.4;
+            chunk.castShadow = true;
+            edgeGroup.add(chunk);
+        }
+
+        // Falling stone rubble in abyss
+        for (let r = 0; r < 4; r++) {
+            const rGeo = new THREE.DodecahedronGeometry(0.35 + Math.random() * 0.2);
+            const rubble = new THREE.Mesh(rGeo, this.materials.curb);
+            rubble.position.set(brokenX + (Math.random() - 0.5) * 1.5, -0.8 - Math.random() * 1.2, (Math.random() - 0.5) * 4);
+            edgeGroup.add(rubble);
+        }
+
+        // Golden marker post on the safe lane side
+        const safeX = this.lanes[openLane + 1];
+        const postGeo = new THREE.CylinderGeometry(0.12, 0.16, 1.4, 8);
+        const post = new THREE.Mesh(postGeo, this.materials.gold);
+        post.position.set(safeX + (openLane === -1 ? -1.1 : 1.1), 0.7, 0);
+        edgeGroup.add(post);
+
+        const isLeftDodge = (openLane === -1);
+        return {
+            type: isLeftDodge ? 'LEFT' : 'RIGHT',
+            subType: 'COLLAPSED_EDGE',
+            group: edgeGroup,
+            worldZ: zPos,
+            requiredAction: isLeftDodge ? 'LEFT' : 'RIGHT',
+            targetLane: openLane,
+            label: isLeftDodge ? 'LEAN LEFT!' : 'LEAN RIGHT!',
+            color: isLeftDodge ? '#BF55EC' : '#2ECC71',
+            prompted: false,
+            passed: false,
+            cleared: false,
+            hitRadius: 2.0,
+            lane: 'SELECTIVE'
+        };
+    }
+
+    // 10. SPAWN NEXT TRAP (TIKTOK SINGLE-TRAP SEQUENTIAL MECHANIC)
+    spawnNextTrap() {
+        if (this.activeTrap || !this.isRunning || this.isGameOver) return;
+
+        // Alternate main motion actions for dynamic fitness and variety
+        const motions = ['JUMP', 'DUCK', 'LEFT', 'RIGHT'];
+        const pool = motions.filter(m => m !== this.lastTrapMotion);
+        const chosenMotion = pool[Math.floor(Math.random() * pool.length)];
+        this.lastTrapMotion = chosenMotion;
+
+        // Position trap ahead down the runway based on steady speed
+        const spawnDistance = Math.max(38, this.speed * 1.75);
+        const trapZ = this.playerZ - spawnDistance;
+
+        let trapObj = null;
+
+        if (chosenMotion === 'JUMP') {
+            // Variety of Jump Traps: Fire Hurdle, Sprawling Roots, Chasm Gap
+            const jumpTypes = ['FIRE_HURDLE', 'TREE_ROOTS', 'CHASM_GAP'];
+            const chosen = jumpTypes[Math.floor(Math.random() * jumpTypes.length)];
+            if (chosen === 'FIRE_HURDLE') {
+                trapObj = this.buildFireHurdle(trapZ);
+                window.soundEngine.playFireRumble();
+            } else if (chosen === 'TREE_ROOTS') {
+                trapObj = this.buildTreeRoots(trapZ);
+            } else {
+                trapObj = this.buildChasmGap(trapZ);
+                window.soundEngine.playChasmWind();
+            }
+        } else if (chosenMotion === 'DUCK') {
+            // Variety of Duck Traps: Spiked Lintel, Low Stone Arch Gate, Overhead Flame Trap
+            const duckTypes = ['SPIKED_LINTEL', 'STONE_ARCH_GATE', 'OVERHEAD_FLAME'];
+            const chosen = duckTypes[Math.floor(Math.random() * duckTypes.length)];
+            if (chosen === 'SPIKED_LINTEL') {
+                trapObj = this.buildSpikedLintel(trapZ);
+            } else if (chosen === 'STONE_ARCH_GATE') {
+                trapObj = this.buildStoneArchGate(trapZ);
+            } else {
+                trapObj = this.buildOverheadFlameTrap(trapZ);
+                window.soundEngine.playFireRumble();
+            }
+        } else if (chosenMotion === 'LEFT') {
+            // Variety of Left Lean Traps: Idol Barrier, Rolling Boulder, Collapsed Edge
+            const leftTypes = ['IDOL_BARRIER', 'ROLLING_BOULDER', 'COLLAPSED_EDGE'];
+            const chosen = leftTypes[Math.floor(Math.random() * leftTypes.length)];
+            if (chosen === 'IDOL_BARRIER') {
+                trapObj = this.buildIdolBarrier(trapZ, -1);
+            } else if (chosen === 'ROLLING_BOULDER') {
+                trapObj = this.buildRollingBoulder(trapZ, -1);
+                window.soundEngine.playBoulderRumble();
+            } else {
+                trapObj = this.buildCollapsedEdge(trapZ, -1);
+                window.soundEngine.playChasmWind();
+            }
+        } else {
+            // Variety of Right Lean Traps: Idol Barrier, Rolling Boulder, Collapsed Edge
+            const rightTypes = ['IDOL_BARRIER', 'ROLLING_BOULDER', 'COLLAPSED_EDGE'];
+            const chosen = rightTypes[Math.floor(Math.random() * rightTypes.length)];
+            if (chosen === 'IDOL_BARRIER') {
+                trapObj = this.buildIdolBarrier(trapZ, 1);
+            } else if (chosen === 'ROLLING_BOULDER') {
+                trapObj = this.buildRollingBoulder(trapZ, 1);
+                window.soundEngine.playBoulderRumble();
+            } else {
+                trapObj = this.buildCollapsedEdge(trapZ, 1);
+                window.soundEngine.playChasmWind();
+            }
+        }
+
+        // Add solely to the scene
+        this.scene.add(trapObj.group);
+        this.activeTrap = trapObj;
+    }
+
+    // --- GOLDEN AZTEC COINS SPAWNER ---
+    spawnCoins(chunk, chunkZ) {
+        const laneIdx = Math.floor(Math.random() * 3);
+        const laneX = this.lanes[laneIdx];
+        const coinCount = 5;
+
+        for (let c = 0; c < coinCount; c++) {
+            const zPos = -14 + c * 2.8;
+            const coinGroup = new THREE.Group();
+            coinGroup.position.set(laneX, 1.25, zPos);
+
+            // Golden Medallion
+            const coinGeo = new THREE.CylinderGeometry(0.38, 0.38, 0.1, 16);
+            const coin = new THREE.Mesh(coinGeo, this.materials.gold);
+            coin.rotation.x = Math.PI / 2;
+            coin.castShadow = true;
+            coinGroup.add(coin);
+
+            // Center jewel dot
+            const dotGeo = new THREE.SphereGeometry(0.1, 8, 8);
+            const dot = new THREE.Mesh(dotGeo, this.materials.turquoise);
+            dot.position.z = 0.06;
+            coinGroup.add(dot);
+
+            chunk.add(coinGroup);
+
+            this.coins.push({
+                mesh: coinGroup,
+                worldZ: chunkZ + zPos,
+                laneIndex: laneIdx,
+                collected: false
+            });
+        }
+    }
+
+    // ============================================================
+    // GAME LIFECYCLE
+    // ============================================================
+    start() {
+        this.resetWorld();
+        this.isRunning = true;
+        this.isGameOver = false;
+        this.lastTime = performance.now();
+
+        // Start High-Energy Procedural Tribal Drums
+        window.soundEngine.startBGM(125);
+
+        // Run main 60 FPS game loop
+        requestAnimationFrame((time) => this.gameLoop(time));
+    }
+
+    resetWorld() {
+        // Clear old chunks & active trap
+        this.chunks.forEach(c => this.scene.remove(c.mesh));
+        this.chunks = [];
+        if (this.activeTrap) {
+            this.scene.remove(this.activeTrap.group);
+            this.activeTrap = null;
+        }
+        this.trapCooldownTimer = 1.3;
+        this.lastTrapType = null;
+        this.lastTrapMotion = null;
+        this.coins = [];
+        this.animatedFlames = [];
+        this.animatedLights = [];
+        this.activePrompt = null;
+
+        // Reset player coordinates
+        this.currentLaneIndex = 1;
+        this.targetPlayerX = 0;
+        this.playerX = 0;
+        this.playerY = 0;
+        this.playerZ = 0;
+        this.isJumping = false;
+        this.isDucking = false;
+        this.jumpProgress = 0;
+        this.duckProgress = 0;
+        this.continuousTargetX = 0;
+        this.continuousBodyY = 0;
+        this.rawBodyDiffX = 0;
+        this.rawBodyDiffY = 0;
+
+        // Reset gameplay metrics
+        this.speed = this.baseSpeed;
+        this.distance = 0;
+        this.score = 0;
+        this.combo = 1;
+        this.comboStreak = 0;
+        this.lives = this.maxLives;
+        this.reactionTimes = [];
+
+        // Generate initial world chunks
+        for (let i = 0; i < this.visibleChunks; i++) {
+            const z = -i * this.chunkLength;
+            this.generateChunk(z, i);
+        }
+    }
+
+    setCameraMode(mode) {
+        this.cameraMode = mode;
+        if (mode === 'firstPerson') {
+            this.playerGroup.visible = false;
+        } else {
+            this.playerGroup.visible = true;
+        }
+    }
+
+    // ============================================================
+    // MAIN GAME LOOP (60 FPS)
+    // ============================================================
+    gameLoop(currentTime) {
+        if (!this.isRunning) return;
+
+        // Clamp: never negative (rAF timestamps can precede performance.now()), never > 0.1s
+        const delta = Math.max(0, Math.min((currentTime - this.lastTime) / 1000, 0.1));
+        this.lastTime = currentTime;
+
+        if (!this.isPaused && !this.isGameOver) {
+            this.update(delta);
+        }
+
+        this.renderer.render(this.scene, this.camera);
+        requestAnimationFrame((time) => this.gameLoop(time));
+    }
+
+    update(delta) {
+        // 1. Forward Motion along sunlit runway
+        const forwardStep = this.speed * delta;
+        this.playerZ -= forwardStep;
+        this.distance += forwardStep;
+
+        // Maintain a consistent, steady pace from start to end (no speed increase)
+        this.speed = this.baseSpeed;
+
+        // 2. Continuous 1:1 Lateral Movement
+        // Translates every slight shift of the user's body immediately into world movement
+        const targetX = (this.isContinuousTracking) ? this.continuousTargetX : this.lanes[this.currentLaneIndex];
+        this.playerX += (targetX - this.playerX) * Math.min(1.0, delta * 24);
+
+        // 3. Vertical Stance & Jump/Duck Dynamics
+        let totalY = (this.isContinuousTracking) ? this.continuousBodyY : 0;
+
+        if (this.isJumping) {
+            this.jumpProgress += delta / this.jumpDuration;
+            if (this.jumpProgress >= 1.0) {
+                this.isJumping = false;
+                this.jumpProgress = 0;
+            } else {
+                totalY += Math.sin(this.jumpProgress * Math.PI) * 2.3;
+            }
+        }
+
+        if (this.isDucking) {
+            this.duckProgress += delta / this.duckDuration;
+            if (this.duckProgress >= 1.0) {
+                this.isDucking = false;
+                this.duckProgress = 0;
+            } else {
+                totalY -= Math.sin(this.duckProgress * Math.PI) * 0.95;
+            }
+        }
+
+        this.playerY = totalY;
+
+        // 5. Update Avatar Position & Running Animation
+        this.updatePlayerAvatar(delta);
+
+        // 6. Update Camera Kinematics (Matching TikTok video view)
+        this.updateCamera(delta);
+
+        // 7. Recycle & Generate World Chunks Ahead
+        this.updateWorldChunks();
+
+        // 8. Sequential Single-Trap Progression (TikTok Mechanic)
+        // Next trap only appears after current is cleared!
+        this.updateSingleTrap(delta);
+
+        // Stop processing this frame immediately if the last life was just lost
+        // (prevents coins being collected / HUD changing after Game Over)
+        if (this.isGameOver) return;
+
+        // 9. Collect Gold Coins
+        this.updateCoins(delta);
+
+        // 10. Animate Roaring Flame Jets & Torch Lights
+        this.animateFlamesAndLights();
+
+        // 11. Distant Mountains follow player forward
+        if (this.distantGroup) {
+            this.distantGroup.position.z = this.playerZ;
+        }
+
+        // 12. Dispatch HUD update
+        if (this.onHUDUpdate) {
+            this.onHUDUpdate({
+                distance: Math.floor(this.distance),
+                score: this.score,
+                combo: this.combo,
+                lives: this.lives,
+                speed: Math.floor(this.speed * 3.6),
+                currentLane: this.currentLaneIndex - 1
+            });
+        }
+    }
+
+    updatePlayerAvatar(delta) {
+        if (!this.playerGroup || !this.playerGroup.visible) return;
+
+        this.playerGroup.position.set(this.playerX, Math.max(0, this.playerY), this.playerZ);
+
+        if (!this.isJumping && !this.isDucking) {
+            const runCadence = this.distance * 1.8;
+            this.leftLeg.rotation.x = Math.sin(runCadence) * 0.65;
+            this.rightLeg.rotation.x = -Math.sin(runCadence) * 0.65;
+            this.leftArm.rotation.x = -Math.sin(runCadence) * 0.55;
+            this.rightArm.rotation.x = Math.sin(runCadence) * 0.55;
+            this.playerGroup.rotation.z = (this.targetPlayerX - this.playerX) * -0.15;
+            this.playerGroup.scale.set(1, 1, 1);
+        } else if (this.isDucking) {
+            this.playerGroup.scale.set(1.15, 0.5, 1.15);
+        } else {
+            this.playerGroup.scale.set(1, 1, 1);
+            this.leftLeg.rotation.x = 0.4;
+            this.rightLeg.rotation.x = 0.4;
+        }
+    }
+
+    updateCamera(delta) {
+        // Natural step bounce matching runner cadence
+        const stepBob = (!this.isJumping && !this.isDucking) ? Math.sin(this.distance * 1.5) * 0.07 : 0;
+        const bankAngle = (this.targetPlayerX - this.playerX) * -0.06;
+
+        if (this.cameraMode === 'firstPerson') {
+            // 1st Person: Right at eye height (1.8m), look straight ahead down the grand terrace!
+            const eyeHeight = 1.8 + this.playerY + stepBob;
+            this.camera.position.set(this.playerX, Math.max(0.65, eyeHeight), this.playerZ);
+            this.camera.rotation.z = bankAngle;
+            this.camera.lookAt(this.playerX, Math.max(0.65, eyeHeight), this.playerZ - 20);
+        } else {
+            // 3rd Person: Behind and slightly above player avatar
+            const camTargetY = 3.2 + this.playerY * 0.5;
+            this.camera.position.set(this.playerX * 0.85, camTargetY, this.playerZ + 5.5);
+            this.camera.rotation.z = bankAngle * 0.6;
+            this.camera.lookAt(this.playerX, 1.6 + this.playerY, this.playerZ - 14);
+        }
+
+        // Sun follows player forward to maintain consistent shadows
+        if (this.sunLight) {
+            this.sunLight.position.set(this.playerX + 25, 45, this.playerZ - 30);
+            this.sunLight.target.position.set(this.playerX, 0, this.playerZ - 10);
+            this.sunLight.target.updateMatrixWorld();
+        }
+    }
+
+    updateWorldChunks() {
+        const oldestChunk = this.chunks[0];
+        if (oldestChunk && oldestChunk.z > this.playerZ + this.chunkLength * 1.5) {
+            this.scene.remove(oldestChunk.mesh);
+            this.chunks.shift();
+
+            const newestChunk = this.chunks[this.chunks.length - 1];
+            const newZ = newestChunk.z - this.chunkLength;
+            this.generateChunk(newZ, newestChunk.index + 1);
+        }
+    }
+
+    // ============================================================
+    // SEQUENTIAL SINGLE-TRAP LIFECYCLE (TIKTOK REFLEX MECHANIC)
+    // Only one trap is active. The next trap only spawns and appears
+    // after the current one has been cleared!
+    // ============================================================
+    updateSingleTrap(delta) {
+        // If no active trap exists, count down the sprint interval until next trap appears
+        if (!this.activeTrap) {
+            this.trapCooldownTimer -= delta;
+            if (this.trapCooldownTimer <= 0) {
+                this.spawnNextTrap();
+            }
+            return;
+        }
+
+        const trap = this.activeTrap;
+        const distToPlayer = trap.worldZ - this.playerZ;
+
+        // Approaching trap: trigger audio / voice cue once
+        if (!trap.prompted && distToPlayer < 0 && distToPlayer > -this.speed * 1.4) {
+            trap.prompted = true;
+            this.reactionStartTime = performance.now();
+            window.soundEngine.speakCue(trap.type);
+
+            if (this.onReflexCue) {
+                this.onReflexCue({
+                    type: trap.type,
+                    label: trap.label,
+                    color: trap.color,
+                    timeMs: Math.round((-distToPlayer / this.speed) * 1000)
+                });
+            }
+        }
+
+        // Crossing trap line: check success or hit
+        if (!trap.passed && distToPlayer >= -trap.hitRadius && distToPlayer <= trap.hitRadius) {
+            let success = false;
+
+            if (trap.type === 'JUMP') {
+                if (this.isJumping || this.playerY > 0.55) {
+                    success = true;
+                }
+            } else if (trap.type === 'DUCK') {
+                if (this.isDucking || this.playerY < -0.28) {
+                    success = true;
+                }
+            } else if (trap.type === 'LEFT') {
+                if (this.playerX < -0.85 || this.currentLaneIndex === 0) {
+                    success = true;
+                }
+            } else if (trap.type === 'RIGHT') {
+                if (this.playerX > 0.85 || this.currentLaneIndex === 2) {
+                    success = true;
+                }
+            }
+
+            trap.passed = true;
+            if (success) {
+                trap.cleared = true;
+                this.handleReflexSuccess(trap);
+            } else {
+                this.handleReflexFailure(trap);
+            }
+
+            // CRITICAL TIKTOK MECHANIC:
+            // Current trap is cleared!
+            // Start the sprint cooldown (e.g. 1.25s of clean sprinting)
+            // BEFORE the next trap suddenly appears!
+            this.trapCooldownTimer = 1.25;
+        }
+
+        // Remove trap once it passes behind player
+        if (distToPlayer > 18) {
+            this.scene.remove(trap.group);
+            this.activeTrap = null;
+        }
+    }
+
+    handleReflexSuccess(obs) {
+        const reactionTime = Math.round(performance.now() - this.reactionStartTime);
+        this.reactionTimes.push(reactionTime);
+
+        const rating = (reactionTime < 460) ? 'PERFECT' : 'GREAT';
+
+        this.comboStreak++;
+        if (this.comboStreak >= 3) {
+            this.combo = Math.min(8, this.combo + 1);
+            this.comboStreak = 0;
+        }
+
+        window.soundEngine.playSuccessRating(rating);
+
+        if (this.onReflexFeedback) {
+            this.onReflexFeedback({
+                status: rating,
+                text: `${rating}!`,
+                color: rating === 'PERFECT' ? '#FFE600' : '#00FFCC',
+                reactionMs: reactionTime
+            });
+        }
+    }
+
+    handleReflexFailure(obs) {
+        this.lives--;
+        this.combo = 1;
+        this.comboStreak = 0;
+
+        window.soundEngine.playHit();
+
+        if (this.onReflexFeedback) {
+            this.onReflexFeedback({
+                status: 'MISS',
+                text: 'MISS! -1 LIFE',
+                color: '#FF2222',
+                reactionMs: 0
+            });
+        }
+
+        if (this.lives <= 0) {
+            this.gameOver();
+        }
+    }
+
+    updateCoins(delta) {
+        for (let i = this.coins.length - 1; i >= 0; i--) {
+            const coin = this.coins[i];
+            coin.mesh.rotation.y += delta * 4.5; // Spin Aztec coin
+
+            if (!coin.collected) {
+                const distZ = Math.abs(coin.worldZ - this.playerZ);
+                const distX = Math.abs(coin.mesh.position.x - this.playerX);
+                const isMatchingLane = (this.currentLaneIndex === coin.laneIndex) || (distX < 1.35);
+
+                if (distZ < 1.4 && isMatchingLane && Math.abs(this.playerY) < 1.6) {
+                    coin.collected = true;
+                    coin.mesh.visible = false;
+                    this.score += 1; // 1 coin = 1 point, 2 coins = 2 points
+                    window.soundEngine.playCoin();
+                }
+            }
+
+            if (coin.worldZ > this.playerZ + 15) {
+                this.coins.splice(i, 1);
+            }
+        }
+    }
+
+    // --- ANIMATE ROARING FLAME JETS, BRAZIERS & ROLLING BOULDERS ---
+    animateFlamesAndLights() {
+        const time = performance.now() * 0.008;
+
+        // Animate obstacle flames (Fire Hurdle or Overhead Flame Trap)
+        if (this.activeTrap && this.activeTrap.flames) {
+            this.activeTrap.flames.forEach((flameMesh, idx) => {
+                const flicker = Math.sin(time * 3 + idx * 1.2) * 0.2 + (Math.random() - 0.5) * 0.15;
+                flameMesh.scale.y = 1.0 + flicker * 0.35;
+                flameMesh.scale.x = 1.0 + Math.cos(time * 2 + idx) * 0.12;
+            });
+        }
+
+        // Animate giant rolling Aztec boulder
+        if (this.activeTrap && this.activeTrap.boulderMesh) {
+            this.activeTrap.boulderMesh.rotation.x -= 0.08;
+        }
+
+        // Animate wall brazier torches
+        this.animatedFlames.forEach((item, idx) => {
+            const flicker = Math.sin(time * 2 + idx * 1.5) * 0.2 + (Math.random() - 0.5) * 0.15;
+            item.flame.scale.y = item.baseScale + flicker * 0.4;
+        });
+
+        this.animatedLights.forEach((item, idx) => {
+            const flicker = Math.sin(time * 2.5 + idx) * 0.25;
+            item.light.intensity = Math.max(0.6, item.baseIntensity + flicker);
+        });
+    }
+
+    // ============================================================
+    // CONTINUOUS 1:1 BODY MOTION MAPPING & REAL-TIME TRACKING
+    // Translates even the slightest body shift into in-game movement
+    // ============================================================
+    setBodyContinuous(diffX, diffY) {
+        this.isContinuousTracking = true;
+        this.rawBodyDiffX = diffX;
+        this.rawBodyDiffY = diffY;
+
+        // HIGH SENSITIVITY: Every millimeter of body shift moves the player/camera!
+        // 0.12 camera frame displacement covers the full lane (~2.7m)
+        const targetX = Math.max(-3.6, Math.min(3.6, diffX * 22.5));
+        this.continuousTargetX = targetX;
+
+        // CONTINUOUS VERTICAL STANCE MAPPING:
+        // Knee bends, squats, or rising tall immediately reflect in the camera & avatar!
+        if (diffY > 0.008) {
+            // Body dipping / squatting down
+            this.continuousBodyY = -Math.min(1.2, (diffY - 0.008) * 12.0);
+        } else if (diffY < -0.008) {
+            // Body rising / hopping up
+            this.continuousBodyY = Math.min(1.8, (-diffY - 0.008) * 14.0);
+        } else {
+            this.continuousBodyY = 0;
+        }
+
+        // Keep lane index in sync with physical body position
+        if (this.playerX < -1.1) {
+            this.currentLaneIndex = 0; // Left
+        } else if (this.playerX > 1.1) {
+            this.currentLaneIndex = 2; // Right
+        } else {
+            this.currentLaneIndex = 1; // Center
+        }
+    }
+
+    // ============================================================
+    // PLAYER ACTION INPUTS (FROM WEBCAM TRACKER OR KEYBOARD)
+    // ============================================================
+    triggerJump() {
+        if (this.isJumping || this.isGameOver || !this.isRunning) return;
+        this.isJumping = true;
+        this.isDucking = false;
+        this.jumpProgress = 0;
+        window.soundEngine.playJump();
+    }
+
+    triggerDuck() {
+        if (this.isDucking || this.isGameOver || !this.isRunning) return;
+        this.isDucking = true;
+        this.isJumping = false;
+        this.duckProgress = 0;
+        window.soundEngine.playDuck();
+    }
+
+    triggerMoveLeft() {
+        if (this.currentLaneIndex > 0) {
+            this.currentLaneIndex--;
+            window.soundEngine.playDodge(-1);
+        }
+    }
+
+    triggerMoveRight() {
+        if (this.currentLaneIndex < 2) {
+            this.currentLaneIndex++;
+            window.soundEngine.playDodge(1);
+        }
+    }
+
+    triggerCenter() {
+        this.currentLaneIndex = 1;
+    }
+
+    // --- KEYBOARD CONTROLS FALLBACK ---
+    bindKeyboardControls() {
+        window.addEventListener('keydown', (e) => {
+            if (!this.isRunning || this.isGameOver) return;
+
+            switch (e.code) {
+                case 'ArrowUp':
+                case 'KeyW':
+                case 'Space':
+                    e.preventDefault();
+                    this.triggerJump();
+                    break;
+                case 'ArrowDown':
+                case 'KeyS':
+                    e.preventDefault();
+                    this.triggerDuck();
+                    break;
+                case 'ArrowLeft':
+                case 'KeyA':
+                    e.preventDefault();
+                    this.triggerMoveLeft();
+                    break;
+                case 'ArrowRight':
+                case 'KeyD':
+                    e.preventDefault();
+                    this.triggerMoveRight();
+                    break;
+            }
+        });
+    }
+
+    gameOver() {
+        this.isRunning = false;
+        this.isGameOver = true;
+        window.soundEngine.stopBGM();
+
+        // Final HUD sync so the hearts / score match the Game Over report exactly
+        if (this.onHUDUpdate) {
+            this.onHUDUpdate({
+                distance: Math.floor(this.distance),
+                score: this.score,
+                combo: this.combo,
+                lives: Math.max(0, this.lives),
+                speed: Math.floor(this.speed * 3.6),
+                currentLane: this.currentLaneIndex - 1
+            });
+        }
+
+        let avgReaction = 0;
+        if (this.reactionTimes.length > 0) {
+            avgReaction = Math.round(
+                this.reactionTimes.reduce((a, b) => a + b, 0) / this.reactionTimes.length
+            );
+        }
+
+        if (this.onGameOver) {
+            this.onGameOver({
+                distance: Math.floor(this.distance),
+                score: this.score,
+                avgReaction: avgReaction
+            });
+        }
+    }
+
+    onWindowResize() {
+        if (!this.camera || !this.renderer || !this.container) return;
+        const w = this.container.clientWidth;
+        const h = this.container.clientHeight;
+        this.camera.aspect = w / h;
+        this.camera.updateProjectionMatrix();
+        this.renderer.setSize(w, h);
+    }
+}
+
+// Global instance
+window.templeGame = new TempleGame();
